@@ -1,0 +1,68 @@
+{
+  "project_info": {
+    "project_number": "263240508910",
+    "project_id": "onebloodconnect",
+    "storage_bucket": "onebloodconnect.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:263240508910:android:2b63fb243dfb42314d5aff",
+        "android_client_info": {
+          "package_name": "com.example.my_first_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "263240508910-gmfascq7ir9tkvlrhep1b3ch7llms6p9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDfh4km21p8dAWCH_pJv_WF6rrciSJoKNo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "263240508910-gmfascq7ir9tkvlrhep1b3ch7llms6p9.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:263240508910:android:8b19f7c00df5f4334d5aff",
+        "android_client_info": {
+          "package_name": "com.oneblood.admin"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "263240508910-gmfascq7ir9tkvlrhep1b3ch7llms6p9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDfh4km21p8dAWCH_pJv_WF6rrciSJoKNo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "263240508910-gmfascq7ir9tkvlrhep1b3ch7llms6p9.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

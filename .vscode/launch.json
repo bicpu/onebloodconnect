@@ -1,0 +1,26 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "User App",
+      "request": "launch",
+      "type": "dart",
+      "cwd": "${workspaceFolder}",
+      "program": "${workspaceFolder}/lib/main.dart"
+    },
+    {
+      "name": "Admin App",
+      "request": "launch",
+      "type": "dart",
+      "cwd": "${workspaceFolder}/admin",
+      "program": "${workspaceFolder}/admin/lib/main.dart"
+    },
+    {
+      "name": "Blood Bank App",
+      "request": "launch",
+      "type": "dart",
+      "cwd": "${workspaceFolder}/blood_bank_app",
+      "program": "${workspaceFolder}/blood_bank_app/lib/main.dart"
+    }
+  ]
+}
