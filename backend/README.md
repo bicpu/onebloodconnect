@@ -49,6 +49,27 @@ For a hosted deployment, set `FIREBASE_SERVICE_ACCOUNT_JSON` to the complete
 contents of this file as a secret environment variable. Never commit the key or
 include it in a mobile app.
 
+### Provision or revoke an administrator
+
+Administrator access is stored in the Firebase user's signed custom claims.
+Only an authorized operator with access to the existing Firebase Admin SDK
+credentials should run the provisioning tool. Obtain the user's Firebase UID
+from a trusted Firebase Admin Console workflow, then run the command from the
+`backend` directory using the existing `.env`/service-account configuration:
+
+```bash
+node scripts/manage-admin-role.js grant <FIREBASE_UID>
+node scripts/manage-admin-role.js revoke <FIREBASE_UID>
+```
+
+The tool is a local/server-side command only; it is not invoked at application
+startup and has no HTTP endpoint. It preserves unrelated custom claims and
+refuses malformed or unknown existing role claims rather than replacing them.
+Granting takes effect after the user refreshes their Firebase ID token. Revoking
+removes the `admin` role and revokes that user's refresh tokens; the API checks
+token revocation during authentication so previously issued tokens stop working.
+The user must sign in again to receive a fresh token with the remaining roles.
+
 ### 4. Run
 
 **Development** (auto-restarts on file change):

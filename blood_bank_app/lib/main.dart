@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'pages/login_page.dart';
 import 'pages/register_page.dart';
 import 'pages/home_page.dart';
+import 'pages/edit_profile_page.dart';
 import 'services/bb_api.dart';
 
 void main() async {
@@ -73,6 +74,8 @@ class _ProfileGate extends StatefulWidget {
 class _ProfileGateState extends State<_ProfileGate> {
   bool _checking = true;
   bool _needsProfile = false;
+  Map<String, dynamic>? _profile;
+  String? _statusError;
 
   @override
   void initState() {
@@ -82,15 +85,21 @@ class _ProfileGateState extends State<_ProfileGate> {
 
   Future<void> _check() async {
     try {
-      await BbApi().getMe();
-      if (mounted) setState(() => _checking = false);
+      final profile = await BbApi().getMe();
+      if (mounted) setState(() {
+        _profile = profile;
+        _statusError = null;
+        _checking = false;
+      });
     } catch (e) {
       final msg = e.toString();
       if (msg.contains('not_registered')) {
         if (mounted) setState(() { _checking = false; _needsProfile = true; });
       } else {
-        // Network error or other — let them in anyway, home page will handle
-        if (mounted) setState(() => _checking = false);
+        if (mounted) setState(() {
+          _statusError = msg;
+          _checking = false;
+        });
       }
     }
   }
@@ -105,8 +114,71 @@ class _ProfileGateState extends State<_ProfileGate> {
     if (_needsProfile) {
       return RegisterPage(
         onHaveAccount: () => FirebaseAuth.instance.signOut(),
+        onRegistrationComplete: () {
+          setState(() { _checking = true; _needsProfile = false; });
+          _check();
+        },
+      );
+    }
+    if (_statusError != null) {
+      return _AccountStatusScreen(
+        title: 'Could not check account status',
+        message: 'Please check your connection and try again. The dashboard stays unavailable until your account status is confirmed.',
+        onRetry: () => setState(() { _checking = true; _statusError = null; _check(); }),
+      );
+    }
+    if (_profile?['isVerified'] != true || _profile?['isActive'] != true) {
+      final pending = _profile?['isVerified'] != true;
+      return _AccountStatusScreen(
+        title: pending ? 'Approval pending' : 'Account inactive',
+        message: pending
+            ? 'Your profile has been submitted. Blood bank operations will be available after an administrator approves your account.'
+            : 'This blood bank account is inactive. Contact support for assistance.',
+        onRetry: () => setState(() { _checking = true; _check(); }),
+        onEdit: pending
+            ? () async {
+                await Navigator.push(context, MaterialPageRoute(
+                  builder: (_) => const EditProfilePage(basicOnly: true),
+                ));
+                if (mounted) setState(() { _checking = true; _check(); });
+              }
+            : null,
       );
     }
     return const HomePage();
   }
+}
+
+class _AccountStatusScreen extends StatelessWidget {
+  final String title;
+  final String message;
+  final VoidCallback onRetry;
+  final VoidCallback? onEdit;
+
+  const _AccountStatusScreen({
+    required this.title,
+    required this.message,
+    required this.onRetry,
+    this.onEdit,
+  });
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.hourglass_top, size: 52, color: Color(0xFFC0152A)),
+              const SizedBox(height: 16),
+              Text(title, style: const TextStyle(fontSize: 21, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              Text(message, textAlign: TextAlign.center),
+              const SizedBox(height: 20),
+              if (onEdit != null)
+                OutlinedButton(onPressed: onEdit, child: const Text('Correct profile')),
+              ElevatedButton(onPressed: onRetry, child: const Text('Check again')),
+            ]),
+          ),
+        ),
+      );
 }

@@ -8,6 +8,8 @@ const donorSchema = new mongoose.Schema(
   {
     // Firebase UID — used as the primary lookup key
     uid: { type: String, required: true, unique: true, index: true },
+    // Opaque donor-search/contact selector; never use as an authorization credential.
+    publicRef: { type: String, unique: true, sparse: true, immutable: true, select: false },
 
     fullName:  { type: String, default: '' },
     email:     { type: String, default: '' },

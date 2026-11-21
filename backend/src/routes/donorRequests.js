@@ -3,6 +3,10 @@ const router        = express.Router();
 const authenticate  = require('../middleware/auth');
 const DonorRequest  = require('../models/DonorRequest');
 const Donor         = require('../models/Donor');
+const { serializeDonorRequest } = require('../privacy/donorResponses');
+const { createTransactionRunner, sendTransactionUnavailable } = require('../db/transactions');
+
+const runInTransaction = createTransactionRunner(() => DonorRequest.startSession());
 
 router.use(authenticate);
 
@@ -11,8 +15,7 @@ router.use(authenticate);
 router.post('/', async (req, res) => {
   try {
     const {
-      donorId,
-      donorUid,        // Flutter now sends this alongside donorId
+      donorRef,
       patientName, patientAge, patientGender,
       bloodGroup, units, component, urgency,
       hospital, ward, bedNumber,
@@ -24,14 +27,25 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'patientName, bloodGroup, and units are required' });
     }
 
-    // Look up donor — prefer uid lookup (reliable string) over ObjectId (can be empty)
-    let donor = null;
-    if (donorUid) {
-      donor = await Donor.findOne({ uid: donorUid }).lean();
+    if (typeof donorRef !== 'string' ||
+        !/^[a-f\d]{8}-[a-f\d]{4}-4[a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/i.test(donorRef)) {
+      return res.status(400).json({ error: 'valid_donor_reference_required' });
     }
-    if (!donor && donorId) {
-      try { donor = await Donor.findById(donorId).lean(); } catch (_) {}
-    }
+
+    // A donor must still be registered and have opted into donor search.
+    // Manual records have no authenticated inbox and are not contactable here.
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    const donor = await Donor.findOne({
+      publicRef: donorRef,
+      showToOthers: true,
+      registered: true,
+      manualEntry: { $ne: true },
+      $or: [
+        { bookingStatus: { $ne: 'completed' } },
+        { lastDonationDate: { $lte: ninetyDaysAgo } },
+        { lastDonationDate: null },
+      ],
+    }).select('_id uid fullName bloodGroup').lean();
     if (!donor) return res.status(404).json({ error: 'Donor not found' });
 
     // Prevent the donor from contacting themselves
@@ -61,7 +75,7 @@ router.post('/', async (req, res) => {
       contactPhone:    contactPhone || '',
     });
 
-    res.status(201).json(request);
+    return res.status(201).json(serializeDonorRequest(request, req.uid));
   } catch (err) {
     console.error('[DonorRequest POST /]', err);
     res.status(500).json({ error: 'Server error' });
@@ -75,7 +89,7 @@ router.get('/sent', async (req, res) => {
     const requests = await DonorRequest.find({ requesterUid: req.uid })
       .sort({ createdAt: -1 })
       .lean();
-    res.json(requests);
+    return res.json(requests.map((request) => serializeDonorRequest(request, req.uid)));
   } catch (err) {
     console.error('[DonorRequest GET /sent]', err);
     res.status(500).json({ error: 'Server error' });
@@ -94,7 +108,7 @@ router.get('/inbox', async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    res.json(requests);
+    return res.json(requests.map((request) => serializeDonorRequest(request, req.uid)));
   } catch (err) {
     console.error('[DonorRequest GET /inbox]', err);
     res.status(500).json({ error: 'Server error' });
@@ -116,7 +130,7 @@ router.get('/:id', async (req, res) => {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
-    res.json(request);
+    return res.json(serializeDonorRequest(request, req.uid));
   } catch (err) {
     console.error('[DonorRequest GET /:id]', err);
     res.status(500).json({ error: 'Server error' });
@@ -143,7 +157,7 @@ router.patch('/:id/accept', async (req, res) => {
     request.donorNote   = req.body.donorNote || '';
     await request.save();
 
-    res.json(request);
+    return res.json(serializeDonorRequest(request, req.uid));
   } catch (err) {
     console.error('[DonorRequest PATCH /:id/accept]', err);
     res.status(500).json({ error: 'Server error' });
@@ -170,7 +184,7 @@ router.patch('/:id/decline', async (req, res) => {
     request.cancelReason = req.body.reason || '';
     await request.save();
 
-    res.json(request);
+    return res.json(serializeDonorRequest(request, req.uid));
   } catch (err) {
     console.error('[DonorRequest PATCH /:id/decline]', err);
     res.status(500).json({ error: 'Server error' });
@@ -197,7 +211,7 @@ router.patch('/:id/cancel', async (req, res) => {
     request.cancelReason = req.body.reason || '';
     await request.save();
 
-    res.json(request);
+    return res.json(serializeDonorRequest(request, req.uid));
   } catch (err) {
     console.error('[DonorRequest PATCH /:id/cancel]', err);
     res.status(500).json({ error: 'Server error' });
@@ -209,55 +223,56 @@ router.patch('/:id/cancel', async (req, res) => {
 // Also sets showToOthers=false and enters cooling period on the Donor document.
 router.patch('/:id/complete', async (req, res) => {
   try {
-    const request = await DonorRequest.findById(req.params.id);
-    if (!request) return res.status(404).json({ error: 'Request not found' });
+    const result = await runInTransaction(async (session) => {
+      const outcome = { statusCode: 200, body: null };
+      const reply = {
+        status(code) { outcome.statusCode = code; return this; },
+        json(body) { outcome.body = body; return body; },
+      };
+      const request = await DonorRequest.findById(req.params.id).session(session);
+      if (!request) { reply.status(404).json({ error: 'Request not found' }); return outcome; }
+      if (request.donorUid !== req.uid) {
+        reply.status(403).json({ error: 'Only the target donor can complete this request' }); return outcome;
+      }
+      if (request.status !== 'accepted') {
+        reply.status(400).json({ error: 'Request must be accepted before completing' }); return outcome;
+      }
 
-    if (request.donorUid !== req.uid) {
-      return res.status(403).json({ error: 'Only the target donor can complete this request' });
-    }
+      const { donationPhotoUrl, doctorSlipUrl } = req.body;
+      const donatedAt = new Date();
+      request.status = 'completed';
+      request.donatedAt = donatedAt;
+      request.donationPhotoUrl = donationPhotoUrl || '';
+      request.doctorSlipUrl = doctorSlipUrl || '';
+      await request.save({ session });
 
-    if (request.status !== 'accepted') {
-      return res.status(400).json({ error: 'Request must be accepted before completing' });
-    }
+      const component = (request.component || '').toLowerCase();
+      let coolingDays = 90;
+      if (component.includes('platelet')) coolingDays = 7;
+      else if (component.includes('plasma')) coolingDays = 28;
 
-    const { donationPhotoUrl, doctorSlipUrl } = req.body;
-
-    const donatedAt = new Date();
-    request.status           = 'completed';
-    request.donatedAt        = donatedAt;
-    request.donationPhotoUrl = donationPhotoUrl || '';
-    request.doctorSlipUrl    = doctorSlipUrl    || '';
-    await request.save();
-
-    // Compute cooling period (use component on the request)
-    const component = (request.component || '').toLowerCase();
-    let coolingDays = 90;
-    if (component.includes('platelet')) coolingDays = 7;
-    else if (component.includes('plasma')) coolingDays = 28;
-
-    // Hide donor from search + update last donation
-    const donor = await Donor.findOne({ uid: req.uid });
-    const nextDonationUnits = Number(donor?.lastDonationUnits ?? 0) + 1;
-    await Donor.findOneAndUpdate(
-      { uid: req.uid },
-      {
-        $set: {
-          lastDonationDate:      donatedAt,
-          lastDonationUnits:    nextDonationUnits,
+      const donor = await Donor.findOne({ uid: req.uid }).session(session).lean();
+      const nextDonationUnits = Number(donor?.lastDonationUnits ?? 0) + 1;
+      await Donor.findOneAndUpdate(
+        { uid: req.uid },
+        { $set: {
+          lastDonationDate: donatedAt,
+          lastDonationUnits: nextDonationUnits,
           hospitalBookingActive: false,
-          bookingStatus:         'completed',
-          showToOthers:          false,
-          readyAnyTime:          false,
-        },
-      },
-      { upsert: true, new: true }
-    );
-
-    res.json({ ...request.toObject(), coolingDays });
+          bookingStatus: 'completed',
+          showToOthers: false,
+          readyAnyTime: false,
+        } },
+        { upsert: true, new: true, session },
+      );
+      reply.json({ ...serializeDonorRequest(request, req.uid), coolingDays });
+      return outcome;
+    });
+    return res.status(result.statusCode).json(result.body);
   } catch (err) {
+    if (sendTransactionUnavailable(err, res)) return;
     console.error('[DonorRequest PATCH /:id/complete]', err);
-    res.status(500).json({ error: 'Server error' });
+    return res.status(500).json({ error: 'Server error' });
   }
 });
-
 module.exports = router;

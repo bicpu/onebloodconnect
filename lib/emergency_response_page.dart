@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'services/api_service.dart';
 
@@ -40,14 +39,10 @@ class _EmergencyResponsePageState extends State<EmergencyResponsePage> {
 
   // ── Derived from request ───────────────────────────────────────────────────
   String get _bloodGroup    => widget.request['bloodGroup']    as String? ?? '?';
-  String get _hospital      => widget.request['hospital']      as String? ?? 'Hospital';
-  String get _ward          => widget.request['ward']          as String? ?? '';
+  String get _area          => widget.request['hubZone']       as String? ?? 'Nearby area';
   String get _urgency       => widget.request['urgency']       as String? ?? 'Urgent';
   String get _component     => widget.request['component']     as String? ?? 'Whole Blood';
   String get _units         => '${widget.request['units'] ?? 1}';
-  String get _patientName   => widget.request['patientName']   as String? ?? 'Patient';
-  String get _attender      => widget.request['attender']      as String? ?? '';
-  String get _phone         => widget.request['contactPhone']  as String? ?? '';
   String get _status        => widget.request['status']        as String? ?? 'received';
   String get _requestId     => widget.request['_id']           as String? ?? '';
 
@@ -93,17 +88,8 @@ class _EmergencyResponsePageState extends State<EmergencyResponsePage> {
         || widget.request['isMyActiveCommitment'] == true;
     if (alreadyResponded) {
       _responseSent = true;
-      final responses = widget.request['responses'];
-      if (responses is List) {
-        final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
-        for (final r in responses) {
-          if (r is Map && r['responderUid'] == uid) {
-            final u = r['unitsCommitted'];
-            _committedUnits = (u is int) ? u : (u as num?)?.toInt() ?? 1;
-            break;
-          }
-        }
-      }
+      final committed = widget.request['myUnitsCommitted'];
+      _committedUnits = committed is num ? committed.toInt() : 0;
     }
     _unitsToCommit = _unitsRemaining.clamp(1, _totalUnits.clamp(1, 99));
   }
@@ -410,12 +396,12 @@ class _EmergencyResponsePageState extends State<EmergencyResponsePage> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'For $_patientName',
+                  'Blood donation request',
                   style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 12),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  _hospital,
+                  _area,
                   style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 11),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -436,30 +422,9 @@ class _EmergencyResponsePageState extends State<EmergencyResponsePage> {
           const Text('Request Details',
               style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
           const SizedBox(height: 12),
-          _detailRow(Icons.local_hospital_outlined, 'Hospital', _hospital, Colors.blueAccent),
-          if (_ward.isNotEmpty) ...[
-            const Divider(color: Colors.white12, height: 20),
-            _detailRow(Icons.meeting_room_outlined, 'Ward / Bed',
-                '$_ward${widget.request['bedNumber'] != null && widget.request['bedNumber'].toString().isNotEmpty ? ' · ${widget.request['bedNumber']}' : ''}',
-                Colors.cyanAccent),
-          ],
-          if (_attender.isNotEmpty) ...[
-            const Divider(color: Colors.white12, height: 20),
-            _detailRow(Icons.person_outline, 'Attender', _attender, Colors.greenAccent),
-          ],
-          if (_phone.isNotEmpty) ...[
-            const Divider(color: Colors.white12, height: 20),
-            GestureDetector(
-              onTap: () {
-                Clipboard.setData(ClipboardData(text: _phone));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Phone copied: $_phone'), duration: const Duration(seconds: 2)),
-                );
-              },
-              child: _detailRow(Icons.phone_outlined, 'Contact Phone', _phone, Colors.orangeAccent,
-                  trailing: const Icon(Icons.copy_outlined, color: Colors.white30, size: 14)),
-            ),
-          ],
+          _detailRow(Icons.location_on_outlined, 'Area', _area, Colors.blueAccent),
+          const Divider(color: Colors.white12, height: 20),
+          _detailRow(Icons.bloodtype_outlined, 'Blood group', _bloodGroup, Colors.redAccent),
           const Divider(color: Colors.white12, height: 20),
           _detailRow(Icons.info_outline, 'Status',
               _status[0].toUpperCase() + _status.substring(1), Colors.purpleAccent),
@@ -523,9 +488,8 @@ class _EmergencyResponsePageState extends State<EmergencyResponsePage> {
               const SizedBox(height: 8),
               Text(
                 _committedUnits > 0
-                    ? 'You committed $_committedUnits unit${_committedUnits != 1 ? 's' : ''}. '
-                      'The hospital team will contact you shortly. Keep your phone reachable.'
-                    : 'Your response is registered. The hospital team will contact you shortly.',
+                    ? 'You committed $_committedUnits unit${_committedUnits != 1 ? 's' : ''}. Check the request tracker for updates.'
+                    : 'Your response is registered. Check the request tracker for updates.',
                 style: const TextStyle(color: Colors.white70, fontSize: 12, height: 1.5),
               ),
             ],
@@ -533,27 +497,6 @@ class _EmergencyResponsePageState extends State<EmergencyResponsePage> {
         ),
 
         const SizedBox(height: 12),
-
-        // Call contact button
-        if (_phone.isNotEmpty)
-          SizedBox(
-            width: double.infinity,
-            height: 46,
-            child: OutlinedButton.icon(
-              onPressed: () {
-                Clipboard.setData(ClipboardData(text: _phone));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Phone copied: $_phone'),
-                      duration: const Duration(seconds: 2)));
-              },
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-              ),
-              icon: const Icon(Icons.phone_outlined, color: Colors.white70, size: 18),
-              label: const Text('Call Contact', style: TextStyle(color: Colors.white70, fontSize: 14)),
-            ),
-          ),
 
         const SizedBox(height: 10),
 
@@ -821,33 +764,14 @@ class _EmergencyResponsePageState extends State<EmergencyResponsePage> {
                 const SizedBox(height: 8),
                 Text(
                   _committedUnits > 0
-                      ? 'You committed $_committedUnits unit${_committedUnits != 1 ? 's' : ''}. The hospital team will contact you shortly. Keep your phone reachable.'
-                      : 'Your response has been registered. The hospital team will contact you shortly. Keep your phone reachable.',
+                      ? 'You committed $_committedUnits unit${_committedUnits != 1 ? 's' : ''}. Check the request tracker for updates.'
+                      : 'Your response has been registered. Check the request tracker for updates.',
                   style: const TextStyle(color: Colors.white70, fontSize: 12, height: 1.5),
                 ),
               ],
             ),
           ),
         const SizedBox(height: 12),
-        if (_phone.isNotEmpty)
-          SizedBox(
-            width: double.infinity,
-            height: 46,
-            child: OutlinedButton.icon(
-              onPressed: () {
-                Clipboard.setData(ClipboardData(text: _phone));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Phone copied: $_phone'), duration: const Duration(seconds: 2)),
-                );
-              },
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-              ),
-              icon: const Icon(Icons.phone_outlined, color: Colors.white70, size: 18),
-              label: const Text('Call Contact', style: TextStyle(color: Colors.white70, fontSize: 14)),
-            ),
-          ),
       ],
     );
   }

@@ -31,7 +31,7 @@ class _SearchPageState extends State<SearchPage> {
   List<Map<String, dynamic>> _allBanks   = [];
   List<Map<String, dynamic>> _allDonors  = [];
 
-  /// Donor IDs (uid or _id) the current user has already sent a request to.
+  /// Opaque donor references the current user has already contacted.
   /// Persists for the lifetime of this page so the button stays "Contacted".
   final Set<String> _contactedDonorIds = {};
 
@@ -74,10 +74,11 @@ class _SearchPageState extends State<SearchPage> {
         };
       }).toList();
 
-      // Merge — admin banks first, then self-registered (dedup by name as safety)
+      // Prefer self-registered entries so bank-bound requests retain their
+      // opaque facility reference when a directory entry has the same name.
       final seenNames = <String>{};
       final merged    = <Map<String, dynamic>>[];
-      for (final b in [...adminBanks, ...accountBanks]) {
+      for (final b in [...accountBanks, ...adminBanks]) {
         final name = (b['name'] as String? ?? '').toLowerCase().trim();
         if (name.isNotEmpty && seenNames.add(name)) merged.add(b);
       }
@@ -502,8 +503,7 @@ class _SearchPageState extends State<SearchPage> {
     final bloodGroup  = d['bloodGroup']     as String? ?? '?';
     final city        = d['city']           as String? ?? '';
     final stream      = d['donationStream'] as String? ?? 'Whole Blood';
-    final phone       = d['phone']          as String? ?? '';
-    final isManual    = d['manualEntry']    == true;
+    final ready       = d['readyAnyTime']   == true;
     final initials    = name.trim().isNotEmpty ? name.trim()[0].toUpperCase() : '?';
 
     return _resultCard(
@@ -546,16 +546,6 @@ class _SearchPageState extends State<SearchPage> {
                           child: Text(name,
                               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                         ),
-                        if (isManual)
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFEF3C7),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: const Text('MANUAL',
-                                style: TextStyle(color: Color(0xFFD97706), fontSize: 9, fontWeight: FontWeight.bold)),
-                          ),
                       ],
                     ),
                     const SizedBox(height: 2),
@@ -598,11 +588,8 @@ class _SearchPageState extends State<SearchPage> {
           // Available badge
           Row(
             children: [
-              _miniBadge(Icons.check_circle_outline, 'Available Now'),
-              if (phone.isNotEmpty) ...[
-                const SizedBox(width: 6),
-                _miniBadge(Icons.phone_outlined, phone),
-              ],
+              _miniBadge(Icons.check_circle_outline,
+                  ready ? 'Available now' : 'Open to contact'),
             ],
           ),
 
@@ -712,14 +699,9 @@ class _SearchPageState extends State<SearchPage> {
 
   // ── Contact button helper ─────────────────────────────────────────────────
 
-  /// Unique key for a donor — prefer uid (Firebase string), fall back to _id.
+  /// Opaque backend reference used only to start an in-app contact request.
   String _donorKey(Map<String, dynamic> d) {
-    final uid = d['uid'] as String?;
-    if (uid != null && uid.isNotEmpty) return uid;
-    final id = d['_id'];
-    if (id is String && id.isNotEmpty) return id;
-    if (id is Map) return (id['\$oid'] ?? '').toString();
-    return id?.toString() ?? '';
+    return d['publicRef'] as String? ?? '';
   }
 
   Widget _buildContactButton(Map<String, dynamic> d) {

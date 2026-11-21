@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'services/api_service.dart';
 
 /// Real-time tracking page for a blood request (requester's view).
@@ -401,15 +400,12 @@ class _TrackRequestPageState extends State<TrackRequestPage> {
 
   // ── Single donor response card ────────────────────────────────────────────
   Widget _buildResponseCard(Map<String, dynamic> r) {
-    final name    = (r['responderFullName'] as String?)?.isNotEmpty == true
-        ? r['responderFullName'] as String
-        : r['responderName'] as String? ?? 'Anonymous Donor';
-    final group   = r['responderBloodGroup'] as String? ?? _bloodGroup;
-    final phone   = r['responderPhone']      as String? ?? '';
+    final name    = r['responderName'] as String? ?? 'Anonymous Donor';
+    final group   = _bloodGroup;
     final units   = (r['unitsCommitted'] as num?)?.toInt() ?? 1;
     final initials = name.trim().isNotEmpty ? name.trim()[0].toUpperCase() : '?';
 
-    // Detect referral entries (name contains "Referral" or no phone and manualEntry-like)
+    // Detect referral entries by their display label.
     final isReferral = name.toLowerCase().contains('refer') ||
         (r['referredName'] != null);
 
@@ -461,26 +457,6 @@ class _TrackRequestPageState extends State<TrackRequestPage> {
               Text('$units unit${units != 1 ? 's' : ''}',
                   style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
             ]),
-            if (phone.isNotEmpty) ...[
-              const SizedBox(height: 5),
-              GestureDetector(
-                onTap: () {
-                  Clipboard.setData(ClipboardData(text: phone));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Phone copied: $phone'),
-                          duration: const Duration(seconds: 2)));
-                },
-                child: Row(children: [
-                  const Icon(Icons.phone_outlined, size: 13, color: Color(0xFF2563EB)),
-                  const SizedBox(width: 4),
-                  Text(phone, style: const TextStyle(
-                      fontSize: 12, color: Color(0xFF2563EB),
-                      fontWeight: FontWeight.w500)),
-                  const SizedBox(width: 4),
-                  const Icon(Icons.copy_outlined, size: 12, color: Color(0xFF94A3B8)),
-                ]),
-              ),
-            ],
           ],
         )),
         // Confirmed badge

@@ -161,10 +161,8 @@ class ApiService {
     required String hubZone,
     required String attender,
     required String contactPhone,
-    String targetFacilityName = '',
-    String targetFacilityUid = '',
-    String targetFacilityAddress = '',
-    String targetFacilityPhone = '',
+    String targetFacilityRef = '',
+    String targetFacilityDirectoryId = '',
     bool emergencyPushEnabled = true,
     bool notifyNss = true,
     String? attachmentFileName,
@@ -185,10 +183,9 @@ class ApiService {
       'hubZone':               hubZone,
       'attender':              attender,
       'contactPhone':          contactPhone,
-      'targetFacilityName':    targetFacilityName,
-      'targetFacilityUid':     targetFacilityUid,
-      'targetFacilityAddress': targetFacilityAddress,
-      'targetFacilityPhone':   targetFacilityPhone,
+      if (targetFacilityRef.isNotEmpty) 'targetFacilityRef': targetFacilityRef,
+      if (targetFacilityDirectoryId.isNotEmpty)
+        'targetFacilityDirectoryId': targetFacilityDirectoryId,
       'emergencyPushEnabled':  emergencyPushEnabled,
       'notifyNss':             notifyNss,
       if (attachmentFileName != null) 'attachmentFileName': attachmentFileName,
@@ -313,10 +310,9 @@ class ApiService {
   ///
   /// Creates a new hospital slot booking.
   Future<Map<String, dynamic>> createBooking({
-    required String facilityName,
+    String facilityRef = '',
+    String facilityDirectoryId = '',
     required String slotDate,
-    String facilityAddress = '',
-    String facilityPhone   = '',
     String slotTime        = '',
     String donorName       = '',
     String bloodGroup      = '',
@@ -327,9 +323,8 @@ class ApiService {
     final headers = await _authHeaders();
 
     final body = <String, dynamic>{
-      'facilityName':    facilityName,
-      'facilityAddress': facilityAddress,
-      'facilityPhone':   facilityPhone,
+      if (facilityRef.isNotEmpty) 'facilityRef': facilityRef,
+      if (facilityDirectoryId.isNotEmpty) 'facilityDirectoryId': facilityDirectoryId,
       'slotDate':        slotDate,
       'slotTime':        slotTime,
       'donorName':       donorName,
@@ -495,14 +490,15 @@ class ApiService {
   /// self-registered blood-bank accounts.
   Future<List<Map<String, dynamic>>> getAllDonationFacilities() async {
     final results = await Future.wait([
-      getBloodBanks(),
       getBloodBankAccounts(),
+      getBloodBanks(),
     ]);
     final facilities = <Map<String, dynamic>>[];
     final keys = <String>{};
     for (final source in results) {
       for (final facility in source) {
-        final id = facility['_id']?.toString() ??
+        final id = facility['facilityRef']?.toString() ??
+            facility['_id']?.toString() ??
             facility['uid']?.toString() ??
             '${facility['name']}-${facility['address']}';
         if (keys.add(id)) {
@@ -557,8 +553,7 @@ class ApiService {
   /// POST /donor-requests
   /// Requester sends a direct contact request to a specific donor.
   Future<Map<String, dynamic>> sendDonorRequest({
-    required String donorId,
-    String  donorUid       = '',   // Firebase UID — primary lookup key on backend
+    required String donorRef,
     required String patientName,
     required String bloodGroup,
     required int    units,
@@ -580,8 +575,7 @@ class ApiService {
           Uri.parse('$baseUrl/donor-requests'),
           headers: headers,
           body: jsonEncode({
-            'donorId':       donorId,
-            'donorUid':      donorUid,
+            'donorRef':      donorRef,
             'patientName':   patientName,
             'patientAge':    patientAge,
             'patientGender': patientGender,

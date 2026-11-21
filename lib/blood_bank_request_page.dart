@@ -33,8 +33,8 @@ class _BloodBankRequestPageState extends State<BloodBankRequestPage> {
 
   String get _name => widget.bank['name'] as String? ?? 'Blood Bank';
   String get _address => widget.bank['address'] as String? ?? '';
-  String get _phoneNumber => widget.bank['phone'] as String? ?? '';
-  String get _uid => widget.bank['uid'] as String? ?? '';
+  String get _facilityRef => widget.bank['facilityRef'] as String? ?? '';
+  String get _directoryId => widget.bank['_id'] as String? ?? '';
 
   @override
   void dispose() {
@@ -64,10 +64,8 @@ class _BloodBankRequestPageState extends State<BloodBankRequestPage> {
         hubZone: _name,
         attender: _attender.text.trim(),
         contactPhone: _phone.text.trim(),
-        targetFacilityName: _name,
-        targetFacilityUid: _uid,
-        targetFacilityAddress: _address,
-        targetFacilityPhone: _phoneNumber,
+        targetFacilityRef: _facilityRef,
+        targetFacilityDirectoryId: _directoryId,
       );
       if (!mounted) return;
       Navigator.pushReplacement(

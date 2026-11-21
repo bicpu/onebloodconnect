@@ -61,6 +61,25 @@ class AdminApi {
     return _handleList(r);
   }
 
+  Future<List<Map<String, dynamic>>> getPendingBloodBankAccounts() async {
+    final h = await _headers();
+    final r = await http
+        .get(Uri.parse('$baseUrl/admin/blood-bank-accounts/pending'), headers: h)
+        .timeout(_timeout);
+    return _handleList(r);
+  }
+
+  Future<Map<String, dynamic>> approveBloodBankAccount(String id) async {
+    final h = await _headers();
+    final r = await http
+        .patch(
+          Uri.parse('$baseUrl/admin/blood-bank-accounts/$id/approve'),
+          headers: h,
+        )
+        .timeout(_timeout);
+    return _handle(r);
+  }
+
   Future<Map<String, dynamic>> createBloodBank({
     required String name,
     required String address,

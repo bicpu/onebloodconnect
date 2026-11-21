@@ -5,7 +5,8 @@ import '../services/bb_api.dart';
 
 class RegisterPage extends StatefulWidget {
   final VoidCallback onHaveAccount;
-  const RegisterPage({super.key, required this.onHaveAccount});
+  final VoidCallback? onRegistrationComplete;
+  const RegisterPage({super.key, required this.onHaveAccount, this.onRegistrationComplete});
 
   @override
   State<RegisterPage> createState() => _RegisterPageState();
@@ -74,6 +75,7 @@ class _RegisterPageState extends State<RegisterPage> {
         hours:          _hoursCtrl.text.trim(),
         website:        _websiteCtrl.text.trim(),
       );
+      widget.onRegistrationComplete?.call();
       // Auth stream triggers navigation automatically
     } on FirebaseAuthException catch (e) {
       setState(() => _error = e.message);

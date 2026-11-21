@@ -4,7 +4,8 @@ import '../services/bb_api.dart';
 
 /// Edit blood bank profile: stock, hours, slots, doctors, nurses.
 class EditProfilePage extends StatefulWidget {
-  const EditProfilePage({super.key});
+  final bool basicOnly;
+  const EditProfilePage({super.key, this.basicOnly = false});
 
   @override
   State<EditProfilePage> createState() => _EditProfilePageState();
@@ -152,12 +153,14 @@ class _EditProfilePageState extends State<EditProfilePage> {
         'city':    _cityCtrl.text.trim(),
         'state':   _stateCtrl.text.trim(),
         'pincode': _pincodeCtrl.text.trim(),
-        'hours':   _hoursCtrl.text.trim(),
         'website': _websiteCtrl.text.trim(),
-        'stock':   stock,
-        'slots':   slots,
-        'doctors': doctors,
-        'nurses':  nurses,
+        if (!widget.basicOnly) ...{
+          'hours': _hoursCtrl.text.trim(),
+          'stock': stock,
+          'slots': slots,
+          'doctors': doctors,
+          'nurses': nurses,
+        },
       });
 
       if (!mounted) return;
@@ -178,7 +181,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
         backgroundColor: _red,
-        title: const Text('Edit Profile & Stock',
+        title: Text(widget.basicOnly ? 'Correct Bank Profile' : 'Edit Profile & Stock',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         actions: [
           TextButton(
@@ -207,8 +210,6 @@ class _EditProfilePageState extends State<EditProfilePage> {
                   const SizedBox(height: 10),
                   _field(_phoneCtrl,   'Phone Number', Icons.phone_outlined, type: TextInputType.phone),
                   const SizedBox(height: 10),
-                  _field(_hoursCtrl,   'Operating Hours', Icons.access_time_outlined),
-                  const SizedBox(height: 10),
                   _field(_websiteCtrl, 'Website', Icons.language_outlined),
                   const SizedBox(height: 10),
                   _field(_addressCtrl, 'Address', Icons.location_on_outlined),
@@ -221,6 +222,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
                   const SizedBox(height: 10),
                   _field(_pincodeCtrl, 'PIN Code', Icons.pin_drop_outlined, type: TextInputType.number),
 
+                  if (!widget.basicOnly) ...[
+                  _field(_hoursCtrl, 'Operating Hours', Icons.access_time_outlined),
                   const SizedBox(height: 20),
 
                   // ── Blood Stock ─────────────────────────────────────────
@@ -381,6 +384,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
                       ]),
                     );
                   }),
+
+                  ],
 
                   const SizedBox(height: 24),
 

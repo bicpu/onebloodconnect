@@ -758,7 +758,7 @@ class _DashboardPageState extends State<DashboardPage> {
     return Column(
       children: _activeRequests.take(3).map((r) {
         final bloodGroup      = r['bloodGroup']    as String? ?? '?';
-        final hospital        = r['hospital']      as String? ?? 'Hospital';
+        final hospital        = r['hubZone']       as String? ?? 'Nearby area';
         final urgency         = r['urgency']       as String? ?? 'Urgent';
         final totalUnits      = (r['units'] as num?)?.toInt() ?? 1;
         final remaining       = (r['unitsRemaining'] as num?)?.toInt() ?? totalUnits;

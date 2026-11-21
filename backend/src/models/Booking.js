@@ -9,6 +9,18 @@ const bookingSchema = new mongoose.Schema(
     donorUid: { type: String, required: true, index: true },
 
     // Facility details
+    facilityAccountId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'BloodBankAccount',
+      default: null,
+      select: false,
+    },
+    facilityDirectoryId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'BloodBank',
+      default: null,
+      select: false,
+    },
     facilityName:    { type: String, required: true },
     facilityAddress: { type: String, default: '' },
     facilityPhone:   { type: String, default: '' },
@@ -56,6 +68,19 @@ const bookingSchema = new mongoose.Schema(
     units:           { type: Number, default: 1, min: 1 },
   },
   { timestamps: true }
+);
+
+// Enforce the existing one-active-booking-per-donor rule atomically in MongoDB.
+// Cancelled and completed bookings are excluded, so donors may book again.
+bookingSchema.index(
+  { donorUid: 1 },
+  {
+    unique: true,
+    name: 'uniq_active_booking_per_donor',
+    partialFilterExpression: {
+      status: { $in: ['booked', 'confirmed'] },
+    },
+  },
 );
 
 module.exports = mongoose.model('Booking', bookingSchema);

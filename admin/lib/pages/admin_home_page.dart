@@ -5,6 +5,7 @@ import 'add_blood_bank_page.dart';
 import 'add_donor_page.dart';
 import 'users_list_page.dart';
 import 'donations_page.dart';
+import 'blood_bank_approvals_page.dart';
 
 class AdminHomePage extends StatefulWidget {
   const AdminHomePage({super.key});
@@ -18,7 +19,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
   static const Color subText   = Color(0xFF64748B);
 
   final _api = AdminApi();
-  int _tab = 0; // 0=Dashboard  1=Blood Banks  2=Donors  3=Donations
+  int _tab = 0; // Dashboard, directory, donors, donations, account approvals
 
   // ── Dashboard state ─────────────────────────────────────────────────────
   bool _statsLoading = true;
@@ -123,6 +124,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
               _tabBtn(1, Icons.add_business_outlined, 'Blood Banks'),
               _tabBtn(2, Icons.person_add_outlined, 'Donors'),
               _tabBtn(3, Icons.verified_outlined, 'Donations'),
+              _tabBtn(4, Icons.fact_check_outlined, 'Approvals'),
             ],
           ),
         ),
@@ -133,8 +135,10 @@ class _AdminHomePageState extends State<AdminHomePage> {
               ? _buildBanksTab()
               : _tab == 2
               ? _buildDonorsTab()
-              : const DonationsPage(),
-      floatingActionButton: _tab == 0 || _tab == 3
+              : _tab == 3
+                  ? const DonationsPage()
+                  : const BloodBankApprovalsPage(),
+      floatingActionButton: _tab == 0 || _tab == 3 || _tab == 4
           ? null
           : FloatingActionButton.extended(
               backgroundColor: red,

@@ -59,6 +59,18 @@ const bloodRequestSchema = new mongoose.Schema(
     },
 
     // Target facility details (set by admin / matching engine)
+    targetFacilityAccountId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'BloodBankAccount',
+      default: null,
+      select: false,
+    },
+    targetFacilityDirectoryId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'BloodBank',
+      default: null,
+      select: false,
+    },
     targetFacilityName:    { type: String, default: '' },
     targetFacilityUid:     { type: String, default: '' },
     targetFacilityAddress: { type: String, default: '' },

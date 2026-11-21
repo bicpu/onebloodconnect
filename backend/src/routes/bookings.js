@@ -3,8 +3,32 @@ const router       = express.Router();
 const authenticate = require('../middleware/auth');
 const Booking      = require('../models/Booking');
 const Donor        = require('../models/Donor');
+const BloodBankAccount = require('../models/BloodBankAccount');
+const BloodBank = require('../models/BloodBank');
+const { isActiveBookingDuplicateError } = require('../bookings/bookingErrors');
+const {
+  createTransactionRunner,
+  sendTransactionUnavailable,
+} = require('../db/transactions');
+const {
+  createFacilityResolver,
+  FacilitySelectionError,
+} = require('../facilities/facilitySelection');
+
+const resolveFacilitySelection = createFacilityResolver({
+  findAccountByRef: (facilityRef) => BloodBankAccount.find({
+    facilityRef,
+    isVerified: true,
+    isActive: true,
+  }).limit(2).select('name address city phone isVerified isActive').lean(),
+  findDirectoryById: (id) => BloodBank.findOne({ _id: id, isVerified: true })
+    .select('name address city phone isVerified').lean(),
+});
 
 router.use(authenticate);
+
+const ACTIVE_BOOKING_STATUSES = ['booked', 'confirmed'];
+const runInTransaction = createTransactionRunner(() => Booking.startSession());
 
 async function normalizePendingDonationDate(booking) {
   if (
@@ -29,20 +53,21 @@ async function normalizePendingDonationDate(booking) {
 router.post('/', async (req, res) => {
   try {
     const {
-      facilityName, facilityAddress, facilityPhone,
+      facilityRef, facilityDirectoryId,
       slotDate, slotTime,
       donorName, bloodGroup, component, coolingDays,
       units,
     } = req.body;
 
-    if (!facilityName || !slotDate) {
-      return res.status(400).json({ error: 'facilityName and slotDate are required' });
+    if (!slotDate) {
+      return res.status(400).json({ error: 'slotDate is required' });
     }
+    const facility = await resolveFacilitySelection({ facilityRef, directoryId: facilityDirectoryId });
 
     // Prevent duplicate active bookings — only one at a time
     const existing = await Booking.findOne({
       donorUid: req.uid,
-      status:   { $in: ['booked', 'confirmed'] },
+      status:   { $in: ACTIVE_BOOKING_STATUSES },
     });
     if (existing) {
       return res.status(409).json({
@@ -56,37 +81,58 @@ router.post('/', async (req, res) => {
     const rand       = Math.floor(1000 + Math.random() * 9000);
     const bookingRef = `OBC-APP-${year}-${rand}`;
 
-    const booking = await Booking.create({
-      donorUid:        req.uid,
-      facilityName,
-      facilityAddress: facilityAddress || '',
-      facilityPhone:   facilityPhone   || '',
-      slotDate:        new Date(slotDate),
-      slotTime:        slotTime    || '',
-      bookingRef,
-      status:          'confirmed',
-      donorName:       donorName   || '',
-      bloodGroup:      bloodGroup  || '',
-      component:       component   || 'Whole Blood',
-      coolingDays:     coolingDays || 90,
-      units:           units || 1,
+    const booking = await runInTransaction(async (session) => {
+      const created = new Booking({
+        donorUid: req.uid,
+        facilityAccountId: facility.facilityAccountId,
+        facilityDirectoryId: facility.facilityDirectoryId,
+        facilityName: facility.facilityName,
+        facilityAddress: facility.facilityAddress,
+        facilityPhone: facility.facilityPhone,
+        slotDate: new Date(slotDate),
+        slotTime: slotTime || '',
+        bookingRef,
+        status: 'confirmed',
+        donorName: donorName || '',
+        bloodGroup: bloodGroup || '',
+        component: component || 'Whole Blood',
+        coolingDays: coolingDays || 90,
+        units: units || 1,
+      });
+      await created.save({ session });
+      await Donor.findOneAndUpdate(
+        { uid: req.uid },
+        { $set: { hospitalBookingActive: true, bookingStatus: 'confirmed' } },
+        { upsert: true, session },
+      );
+      return created;
     });
-
-    await Donor.findOneAndUpdate(
-      { uid: req.uid },
-      {
-        $set: {
-          hospitalBookingActive: true,
-          bookingStatus:         'confirmed',
-        },
-      },
-      { upsert: true }
-    );
 
     res.status(201).json(booking);
   } catch (err) {
+    if (sendTransactionUnavailable(err, res)) return;
+    if (err instanceof FacilitySelectionError) {
+      return res.status(err.status).json({ error: err.code });
+    }
+    if (isActiveBookingDuplicateError(err)) {
+      let booking = null;
+      try {
+        booking = await Booking.findOne({
+          donorUid: req.uid,
+          status: { $in: ACTIVE_BOOKING_STATUSES },
+        }).lean();
+      } catch (_) {
+        // The unique-index conflict is definitive even if fetching the
+        // existing booking for the response fails.
+      }
+      return res.status(409).json({
+        error: 'active_booking_exists',
+        booking,
+        message: 'You already have an active booking. Complete or cancel it before booking again.',
+      });
+    }
     console.error('[Booking POST /]', err);
-    res.status(500).json({ error: 'Server error' });
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -244,97 +290,101 @@ router.get('/:id/certificate', async (req, res) => {
 // Also updates Donor.lastDonationDate and clears hospitalBookingActive.
 router.patch('/:id/complete', async (req, res) => {
   try {
-    const booking = await Booking.findById(req.params.id);
-    if (!booking)                        return res.status(404).json({ error: 'Booking not found' });
-    if (booking.donorUid !== req.uid)    return res.status(403).json({ error: 'Forbidden' });
-    if (booking.status === 'completed')  return res.status(409).json({ error: 'Already completed' });
-    if (booking.status === 'cancelled')  return res.status(409).json({ error: 'Booking was cancelled' });
-
     const { donationPhotoUrl, doctorSlipUrl } = req.body;
+    const result = await runInTransaction(async (session) => {
+      const booking = await Booking.findById(req.params.id).session(session);
+      if (!booking) return { status: 404, body: { error: 'Booking not found' } };
+      if (booking.donorUid !== req.uid) return { status: 403, body: { error: 'Forbidden' } };
+      if (booking.status === 'completed') return { status: 409, body: { error: 'Already completed' } };
+      if (booking.status === 'cancelled') return { status: 409, body: { error: 'Booking was cancelled' } };
 
-    // Proof may be uploaded days after the appointment. The donation date is
-    // the completed hospital slot date, not the proof submission timestamp.
-    const donatedAt     = new Date(booking.slotDate);
-    if (Number.isNaN(donatedAt.getTime())) {
-      return res.status(422).json({ error: 'Booking has an invalid slot date' });
-    }
-    const coolingEndsAt = new Date(donatedAt);
-    coolingEndsAt.setDate(coolingEndsAt.getDate() + (booking.coolingDays || 90));
+      // Proof may be uploaded days after the appointment. Use the booked slot date.
+      const donatedAt = new Date(booking.slotDate);
+      if (Number.isNaN(donatedAt.getTime())) {
+        return { status: 422, body: { error: 'Booking has an invalid slot date' } };
+      }
+      const coolingEndsAt = new Date(donatedAt);
+      coolingEndsAt.setDate(coolingEndsAt.getDate() + (booking.coolingDays || 90));
+      booking.status = 'completed';
+      booking.donatedAt = donatedAt;
+      booking.coolingEndsAt = coolingEndsAt;
+      booking.donationPhotoUrl = donationPhotoUrl || '';
+      booking.doctorSlipUrl = doctorSlipUrl || '';
+      booking.proofStatus = 'pending';
+      booking.verificationNote = '';
+      booking.verifiedAt = null;
+      booking.verifiedBy = '';
+      booking.certificateNo = '';
+      booking.certificateIssuedAt = null;
+      await booking.save({ session });
 
-    booking.status           = 'completed';
-    booking.donatedAt        = donatedAt;
-    booking.coolingEndsAt    = coolingEndsAt;
-    booking.donationPhotoUrl = donationPhotoUrl || '';
-    booking.doctorSlipUrl    = doctorSlipUrl    || '';
-    booking.proofStatus      = 'pending';
-    booking.verificationNote = '';
-    booking.verifiedAt       = null;
-    booking.verifiedBy       = '';
-    booking.certificateNo    = '';
-    booking.certificateIssuedAt = null;
-    await booking.save();
-
-    // Keep the donation pending until a blood bank/admin verifies the proof.
-    await Donor.findOneAndUpdate(
-      { uid: req.uid },
-      {
-        $set: {
-          hospitalBookingActive: false,
-          bookingStatus:         'proof_pending',
-        },
-      },
-      { upsert: true }
-    );
-
-    res.json(booking);
+      await Donor.findOneAndUpdate(
+        { uid: req.uid },
+        { $set: { hospitalBookingActive: false, bookingStatus: 'proof_pending' } },
+        { upsert: true, session },
+      );
+      return { booking };
+    });
+    if (result.status) return res.status(result.status).json(result.body);
+    return res.json(result.booking);
   } catch (err) {
+    if (sendTransactionUnavailable(err, res)) return;
     console.error('[Booking PATCH /:id/complete]', err);
-    res.status(500).json({ error: 'Server error' });
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 
 // ─── PATCH /bookings/:id/not-donated ─────────────────────────────────────────
 router.patch('/:id/not-donated', async (req, res) => {
   try {
-    const booking = await Booking.findById(req.params.id);
-    if (!booking) return res.status(404).json({ error: 'Booking not found' });
-    if (booking.donorUid !== req.uid) return res.status(403).json({ error: 'Forbidden' });
-    if (booking.status === 'completed') {
-      return res.status(409).json({ error: 'Donation proof has already been submitted' });
-    }
-    booking.status = 'cancelled';
-    booking.notDonatedReason = String(req.body.reason || '').trim();
-    await booking.save();
-    await Donor.findOneAndUpdate(
-      { uid: req.uid },
-      { $set: { hospitalBookingActive: false, bookingStatus: 'ready_to_donate' } },
-    );
-    res.json(booking);
+    const result = await runInTransaction(async (session) => {
+      const booking = await Booking.findById(req.params.id).session(session);
+      if (!booking) return { status: 404, body: { error: 'Booking not found' } };
+      if (booking.donorUid !== req.uid) return { status: 403, body: { error: 'Forbidden' } };
+      if (booking.status === 'completed') {
+        return { status: 409, body: { error: 'Donation proof has already been submitted' } };
+      }
+      booking.status = 'cancelled';
+      booking.notDonatedReason = String(req.body.reason || '').trim();
+      await booking.save({ session });
+      await Donor.findOneAndUpdate(
+        { uid: req.uid },
+        { $set: { hospitalBookingActive: false, bookingStatus: 'ready_to_donate' } },
+        { session },
+      );
+      return { booking };
+    });
+    if (result.status) return res.status(result.status).json(result.body);
+    return res.json(result.booking);
   } catch (err) {
+    if (sendTransactionUnavailable(err, res)) return;
     console.error('[Booking PATCH /:id/not-donated]', err);
-    res.status(500).json({ error: 'Server error' });
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 
 // ─── PATCH /bookings/:id/cancel ───────────────────────────────────────────────
 router.patch('/:id/cancel', async (req, res) => {
   try {
-    const booking = await Booking.findById(req.params.id);
-    if (!booking)                      return res.status(404).json({ error: 'Booking not found' });
-    if (booking.donorUid !== req.uid)  return res.status(403).json({ error: 'Forbidden' });
-
-    booking.status = 'cancelled';
-    await booking.save();
-
-    await Donor.findOneAndUpdate(
-      { uid: req.uid },
-      { $set: { hospitalBookingActive: false, bookingStatus: 'ready_to_donate' } }
-    );
-
-    res.json(booking);
+    const result = await runInTransaction(async (session) => {
+      const booking = await Booking.findById(req.params.id).session(session);
+      if (!booking) return { status: 404, body: { error: 'Booking not found' } };
+      if (booking.donorUid !== req.uid) return { status: 403, body: { error: 'Forbidden' } };
+      booking.status = 'cancelled';
+      await booking.save({ session });
+      await Donor.findOneAndUpdate(
+        { uid: req.uid },
+        { $set: { hospitalBookingActive: false, bookingStatus: 'ready_to_donate' } },
+        { session },
+      );
+      return { booking };
+    });
+    if (result.status) return res.status(result.status).json(result.body);
+    return res.json(result.booking);
   } catch (err) {
+    if (sendTransactionUnavailable(err, res)) return;
     console.error('[Booking PATCH /:id/cancel]', err);
-    res.status(500).json({ error: 'Server error' });
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 

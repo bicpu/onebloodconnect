@@ -1,6 +1,7 @@
 const express      = require('express');
 const router       = express.Router();
 const authenticate = require('../middleware/auth');
+const authorizeRoles = require('../middleware/authorizeRoles');
 const BloodBank    = require('../models/BloodBank');
 
 router.use(authenticate);
@@ -40,7 +41,7 @@ router.get('/', async (req, res) => {
 
 // ─── POST /blood-banks ────────────────────────────────────────────────────────
 // Admin creates a new blood bank entry.
-router.post('/', async (req, res) => {
+router.post('/', authorizeRoles('admin'), async (req, res) => {
   try {
     const { name, address, city, phone, hours, isVerified, stock } = req.body;
 
@@ -74,7 +75,7 @@ router.post('/', async (req, res) => {
 
 // ─── DELETE /blood-banks/:id ──────────────────────────────────────────────────
 // Admin removes a blood bank entry.
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authorizeRoles('admin'), async (req, res) => {
   try {
     const bank = await BloodBank.findByIdAndDelete(req.params.id);
     if (!bank) return res.status(404).json({ error: 'Blood bank not found' });

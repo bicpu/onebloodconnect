@@ -1,36 +1,26 @@
 {
   "project_info": {
-    "project_number": "263240508910",
-    "project_id": "onebloodconnect",
-    "storage_bucket": "onebloodconnect.firebasestorage.app"
+    "project_number": "969555070157",
+    "project_id": "one-blood-connect",
+    "storage_bucket": "one-blood-connect.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:263240508910:android:2b63fb243dfb42314d5aff",
+        "mobilesdk_app_id": "1:969555070157:android:f8c59e7c110b73a9852d84",
         "android_client_info": {
-          "package_name": "com.example.my_first_app"
+          "package_name": "in.ac.pondiuni.onebloodconnect"
         }
       },
-      "oauth_client": [
-        {
-          "client_id": "263240508910-gmfascq7ir9tkvlrhep1b3ch7llms6p9.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
+      "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyDfh4km21p8dAWCH_pJv_WF6rrciSJoKNo"
+          "current_key": "AIzaSyAbJSmWppo2UUycqbDskvfNpDdvryiJLV8"
         }
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "263240508910-gmfascq7ir9tkvlrhep1b3ch7llms6p9.apps.googleusercontent.com",
-              "client_type": 3
-            }
-          ]
+          "other_platform_oauth_client": []
         }
       }
     }

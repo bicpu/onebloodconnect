@@ -291,10 +291,13 @@ class _BookHospitalSlotPageState extends State<BookHospitalSlotPage> {
     // Fire-and-forget — never block navigation on network errors
     Map<String, dynamic>? booking;
     try {
+      final facilityRef = _selectedVenue?['facilityRef'] as String? ?? '';
+      final facilityDirectoryId = facilityRef.isEmpty
+          ? (_selectedVenue?['_id'] as String? ?? '')
+          : '';
       booking = await ApiService().createBooking(
-        facilityName:    _facilityName,
-        facilityAddress: _facilityAddress,
-        facilityPhone:   _facilityPhone,
+        facilityRef: facilityRef,
+        facilityDirectoryId: facilityDirectoryId,
         slotDate:        selectedDate.toIso8601String(),
         slotTime:        selectedTimeSlot,
         donorName:       user.displayName ?? 'Donor',

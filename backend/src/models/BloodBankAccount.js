@@ -8,6 +8,8 @@ const bloodBankAccountSchema = new mongoose.Schema(
   {
     // Firebase UID — primary lookup key
     uid: { type: String, required: true, unique: true, index: true },
+    // Opaque public selector; never exposes the Firebase UID or MongoDB _id.
+    facilityRef: { type: String, unique: true, sparse: true, immutable: true, select: false },
 
     // ── Identity ────────────────────────────────────────────────────────────
     name:          { type: String, required: true, trim: true },

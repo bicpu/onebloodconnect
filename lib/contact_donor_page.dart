@@ -20,18 +20,7 @@ class _ContactDonorPageState extends State<ContactDonorPage> {
   static const Color _sub    = Color(0xFF64748B);
 
   // ── Donor info (read-only) ─────────────────────────────────────────────────
-  /// _id may come back as a plain string or as a Map { '$oid': '...' } depending
-  /// on the JSON serialiser. We handle both shapes.
-  String get _donorId {
-    final raw = widget.donor['_id'];
-    if (raw == null) return '';
-    if (raw is String) return raw;
-    if (raw is Map) return (raw['\$oid'] ?? raw['oid'] ?? '').toString();
-    return raw.toString();
-  }
-
-  /// Firebase UID of the donor — reliable string, used as primary lookup key.
-  String get _donorUid       => widget.donor['uid']          as String? ?? '';
+  String get _donorRef      => widget.donor['publicRef']    as String? ?? '';
   String get _donorName      => widget.donor['fullName']     as String? ?? 'Donor';
   String get _donorBloodGroup => widget.donor['bloodGroup']  as String? ?? '?';
   String get _donorCity      => widget.donor['city']         as String? ?? '';
@@ -89,8 +78,7 @@ class _ContactDonorPageState extends State<ContactDonorPage> {
 
     try {
       await ApiService().sendDonorRequest(
-        donorId:       _donorId,
-        donorUid:      _donorUid,
+        donorRef:      _donorRef,
         patientName:   _patientName.text.trim(),
         patientAge:    int.tryParse(_patientAge.text.trim()),
         patientGender: _gender,

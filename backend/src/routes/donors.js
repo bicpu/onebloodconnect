@@ -1,7 +1,10 @@
 const express    = require('express');
+const { randomUUID } = require('node:crypto');
 const router     = express.Router();
 const authenticate = require('../middleware/auth');
+const authorizeRoles = require('../middleware/authorizeRoles');
 const Donor      = require('../models/Donor');
+const { serializeDonorSearchResult } = require('../privacy/donorResponses');
 
 // All routes below require a valid Firebase ID token
 router.use(authenticate);
@@ -87,7 +90,7 @@ router.post('/register', async (req, res) => {
 
     const donor = await Donor.findOneAndUpdate(
       { uid: req.uid },
-      { $set: update },
+      { $set: update, $setOnInsert: { publicRef: randomUUID() } },
       { upsert: true, new: true, runValidators: true }
     );
 
@@ -165,6 +168,8 @@ router.get('/search', async (req, res) => {
     const query = {
       showToOthers: true,
       registered:   true,
+      manualEntry:  { $ne: true },
+      publicRef:    { $type: 'string', $ne: '' },
       // Never expose the signed-in donor's own profile in their search results.
       uid: { $ne: req.uid },
       // Exclude donors who completed a donation within the last 90 days
@@ -177,11 +182,19 @@ router.get('/search', async (req, res) => {
     if (bloodGroup) query.bloodGroup = bloodGroup;
 
     const donors = await Donor.find(query)
-      .select('fullName bloodGroup city donationStream phone manualEntry uid')
+      .select({
+        _id: 0,
+        publicRef: 1,
+        fullName: 1,
+        bloodGroup: 1,
+        city: 1,
+        donationStream: 1,
+        readyAnyTime: 1,
+      })
       .sort({ createdAt: -1 })
       .lean();
 
-    res.json(donors);
+    return res.json(donors.map(serializeDonorSearchResult));
   } catch (err) {
     console.error('[Donor GET /search]', err);
     res.status(500).json({ error: 'Server error' });
@@ -190,12 +203,13 @@ router.get('/search', async (req, res) => {
 
 // ─── GET /donors/manual ───────────────────────────────────────────────────────
 // Returns only manually-added donors (admin view).
-router.get('/manual', async (req, res) => {
+router.get('/manual', authorizeRoles('admin'), async (req, res) => {
   try {
     const donors = await Donor.find({ manualEntry: true })
+      .select('_id fullName bloodGroup phone city donationStream readyAnyTime createdAt')
       .sort({ createdAt: -1 })
       .lean();
-    res.json(donors);
+    return res.json(donors);
   } catch (err) {
     console.error('[Donor GET /manual]', err);
     res.status(500).json({ error: 'Server error' });
@@ -204,7 +218,7 @@ router.get('/manual', async (req, res) => {
 
 // ─── POST /donors/manual ─────────────────────────────────────────────────────
 // Admin adds a donor manually (no Firebase account needed).
-router.post('/manual', async (req, res) => {
+router.post('/manual', authorizeRoles('admin'), async (req, res) => {
   try {
     const { fullName, bloodGroup, phone, city, donationStream, readyAnyTime } = req.body;
 
@@ -234,7 +248,11 @@ router.post('/manual', async (req, res) => {
       { upsert: true, new: true, runValidators: false }
     );
 
-    res.status(201).json(donor);
+    const result = donor.toObject();
+    delete result.uid;
+    delete result.email;
+    delete result.publicRef;
+    return res.status(201).json(result);
   } catch (err) {
     console.error('[Donor POST /manual]', err);
     res.status(500).json({ error: 'Server error' });
@@ -243,7 +261,7 @@ router.post('/manual', async (req, res) => {
 
 // ─── DELETE /donors/manual/:id ────────────────────────────────────────────────
 // Admin removes a manually-added donor.
-router.delete('/manual/:id', async (req, res) => {
+router.delete('/manual/:id', authorizeRoles('admin'), async (req, res) => {
   try {
     const donor = await Donor.findOneAndDelete({
       _id:         req.params.id,
