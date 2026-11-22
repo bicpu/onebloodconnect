@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const Module = require('node:module');
 const path = require('node:path');
 
 const { createRequireVerifiedBloodBank } = require('../src/middleware/requireVerifiedBloodBank');
@@ -122,6 +123,120 @@ test('directory reads filter by both active and verified state', () => {
   const directory = routes.slice(routes.indexOf("router.get('/all'"));
   assert.match(directory, /\.select\(\{\s*_id: 0,\s*facilityRef: 1,\s*name: 1,\s*address: 1,\s*city: 1,\s*phone: 1,\s*hours: 1,\s*isVerified: 1,\s*stock: 1,\s*\}\)/);
   assert.doesNotMatch(directory, /uid: 1|email: 1|website: 1|registrationNo: 1|isActive: 1|slots: 1|doctors: 1|nurses: 1|facilityAccountId/);
+  assert.doesNotMatch(directory, /\.\.\.account/);
+});
+
+test('GET /all route returns only its approved fields and normalizes stock', async () => {
+  const routePath = path.join(backendRoot, 'src/routes/bloodBankAccounts.js');
+  const previousModule = require.cache[routePath];
+  const previousLoad = Module._load;
+  const accounts = [
+    {
+      facilityRef: 'public-ref-1', name: 'Central Blood Bank', address: 'Main Road',
+      city: 'Puducherry', phone: '0000000000', hours: '9 AM–5 PM', isVerified: true,
+      stock: new Map([['O+', 4], ['A-', 2]]),
+      _id: 'mongo-internal-id', uid: 'firebase-uid', email: 'private@example.test',
+      passwordHash: 'hashed-secret', credentials: { token: 'secret-token' },
+      verificationMetadata: { reviewerUid: 'admin-uid' }, isActive: true,
+      registrationNo: 'private-registration', website: 'https://internal.test',
+      slots: ['10 AM'], doctors: [{ name: 'Private staff' }], nurses: [{ name: 'Private nurse' }],
+    },
+    {
+      facilityRef: 'public-ref-2', name: 'West Blood Bank', address: 'West Road',
+      city: 'Puducherry', phone: '1111111111', hours: '8 AM–4 PM', isVerified: true,
+      stock: { 'B+': 3 },
+      accountId: 'internal-account-id', verificationNotes: 'internal note',
+    },
+  ];
+  let selectedFilter;
+  let selectedProjection;
+  const registrations = [];
+  const router = { use() { registrations.push({ type: 'use' }); return this; } };
+  for (const method of ['get', 'post', 'patch', 'put', 'delete']) {
+    router[method] = (routePathname, ...handlers) => {
+      registrations.push({ type: method, path: routePathname, handler: handlers.at(-1) });
+      return router;
+    };
+  }
+  const stubs = new Map([
+    ['express', { Router: () => router }],
+    ['../middleware/auth', (_req, _res, next) => next()],
+    ['../middleware/requireVerifiedBloodBank', (_req, _res, next) => next()],
+    ['../models/BloodBankAccount', {
+      find(filter) {
+        selectedFilter = filter;
+        return {
+          select(projection) { selectedProjection = projection; return this; },
+          sort() { return this; },
+          lean: async () => accounts,
+        };
+      },
+    }],
+    ['../models/BloodRequest', {}],
+    ['../models/Donor', {}],
+    ['../models/Booking', {}],
+    ['../facilities/facilitySelection', { facilityOwnershipFilter: () => ({}) }],
+    ['../privacy/donorResponses', {
+      serializeFacilityDonation: (value) => value,
+      serializeFacilityBloodRequest: (value) => value,
+    }],
+    ['../db/transactions', {
+      createTransactionRunner: () => async () => {},
+      sendTransactionUnavailable: () => false,
+    }],
+  ]);
+
+  delete require.cache[routePath];
+  Module._load = function (request, parent, isMain) {
+    if (parent?.filename === routePath && stubs.has(request)) return stubs.get(request);
+    return previousLoad.call(this, request, parent, isMain);
+  };
+
+  try {
+    require(routePath);
+    const allRoute = registrations.find((registration) => registration.type === 'get' && registration.path === '/all');
+    assert.ok(allRoute, 'the /all route is registered');
+    const allRegistrationIndex = registrations.indexOf(allRoute);
+    const authRegistrationIndex = registrations.findIndex((registration) => registration.type === 'use');
+    assert.ok(authRegistrationIndex >= 0 && authRegistrationIndex < allRegistrationIndex,
+      'router authentication middleware runs before /all');
+
+    const response = {
+      statusCode: 200,
+      body: null,
+      status(code) { this.statusCode = code; return this; },
+      json(body) { this.body = body; return this; },
+    };
+    await allRoute.handler({}, response);
+
+    assert.deepEqual(selectedFilter, {
+      isActive: true,
+      isVerified: true,
+      facilityRef: { $type: 'string', $ne: '' },
+    });
+    assert.equal(selectedProjection._id, 0);
+    assert.equal(selectedProjection.stock, 1);
+    assert.equal(response.statusCode, 200);
+    const approvedFields = [
+      'facilityRef', 'name', 'address', 'city', 'phone', 'hours', 'isVerified', 'stock',
+    ].sort();
+    for (const account of response.body) {
+      assert.deepEqual(Object.keys(account).sort(), approvedFields);
+    }
+    assert.deepEqual(response.body[0].stock, { 'O+': 4, 'A-': 2 });
+    assert.deepEqual(response.body[1].stock, { 'B+': 3 });
+    for (const sensitiveField of [
+      '_id', 'uid', 'email', 'passwordHash', 'credentials', 'verificationMetadata',
+      'isActive', 'registrationNo', 'website', 'slots', 'doctors', 'nurses',
+      'accountId', 'verificationNotes',
+    ]) {
+      for (const account of response.body) assert.equal(Object.hasOwn(account, sensitiveField), false);
+    }
+  } finally {
+    Module._load = previousLoad;
+    delete require.cache[routePath];
+    if (previousModule) require.cache[routePath] = previousModule;
+  }
 });
 
 test('pending account listing and approval are behind the admin router guard', () => {

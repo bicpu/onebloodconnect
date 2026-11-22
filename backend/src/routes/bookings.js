@@ -247,10 +247,11 @@ router.get('/history', async (req, res) => {
 // ─── GET /bookings/:id ────────────────────────────────────────────────────────
 router.get('/:id', async (req, res) => {
   try {
-    const bookingDoc = await Booking.findById(req.params.id);
+    // Scope the fetch to the authenticated donor before the legacy date
+    // normalizer can save any changes to the booking.
+    const bookingDoc = await Booking.findOne({ _id: req.params.id, donorUid: req.uid });
     const booking = bookingDoc ? await normalizePendingDonationDate(bookingDoc) : null;
     if (!booking)                        return res.status(404).json({ error: 'Booking not found' });
-    if (booking.donorUid !== req.uid)    return res.status(403).json({ error: 'Forbidden' });
     res.json(booking.toObject());
   } catch (err) {
     console.error('[Booking GET /:id]', err);

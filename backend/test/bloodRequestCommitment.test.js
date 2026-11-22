@@ -156,8 +156,11 @@ test('MongoDB integration: concurrent commitments never exceed units and withdra
         uid: winningUid,
         units: 1,
       });
-      assert.equal(retry, null, 'a retry by the same donor must not duplicate the response');
-
+      assert.equal(
+        retry.reason,
+        'request_not_available',
+        'a retry after fulfillment must be rejected as unavailable',
+      );
       const withdrawal = await withdrawUnits({
         BloodRequest,
         request: await BloodRequest.findById(lastUnitRequest._id),

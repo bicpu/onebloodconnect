@@ -319,7 +319,6 @@ router.get('/all', async (_req, res) => {
       phone: account.phone,
       hours: account.hours,
       isVerified: account.isVerified,
-      ...account,
       stock: account.stock instanceof Map
         ? Object.fromEntries(account.stock)
         : (account.stock || {}),
