@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { DONOR_BOOKING_STATUSES } = require('../donors/bookingStatuses');
 
 /**
  * Donor document — one per Firebase user UID.
@@ -40,6 +41,10 @@ const donorSchema = new mongoose.Schema(
     lastDonationDate:  { type: Date, default: null },
     lastDonationUnits: { type: Number, default: null },
 
+    // Donor-reported history is informational only and never drives eligibility.
+    selfReportedLastDonationDate: { type: Date, default: null },
+    selfReportedLastDonationUnits: { type: Number, default: null },
+
     // Donor registration flag
     registered: { type: Boolean, default: false },
 
@@ -47,7 +52,7 @@ const donorSchema = new mongoose.Schema(
     hospitalBookingActive: { type: Boolean, default: false },
     bookingStatus: {
       type: String,
-      enum: ['ready_to_donate', 'booked', 'confirmed', 'completed', 'cancelled'],
+      enum: DONOR_BOOKING_STATUSES,
       default: 'ready_to_donate',
     },
 

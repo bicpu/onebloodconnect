@@ -20,6 +20,8 @@ class _MedicalProfilePageState extends State<MedicalProfilePage> {
   // Donor data loaded from Firestore
   DateTime? _lastDonationDate;
   int? _lastDonationUnits;
+  DateTime? _selfReportedLastDonationDate;
+  int? _selfReportedLastDonationUnits;
   bool _readyAnyTime = false;
   bool _showToOthers = false;
   String? _preferredVenue;
@@ -43,6 +45,12 @@ class _MedicalProfilePageState extends State<MedicalProfilePage> {
           _lastDonationDate = DateTime.tryParse(data['lastDonationDate'] as String);
         }
         _lastDonationUnits = data['lastDonationUnits'] as int?;
+        if (data['selfReportedLastDonationDate'] != null) {
+          _selfReportedLastDonationDate =
+              DateTime.tryParse(data['selfReportedLastDonationDate'] as String);
+        }
+        _selfReportedLastDonationUnits =
+            data['selfReportedLastDonationUnits'] as int?;
         _readyAnyTime  = data['readyAnyTime']  == true;
         _showToOthers  = data['showToOthers']  == true;
         _preferredVenue = data['preferredVenue'] as String?;
@@ -159,6 +167,14 @@ class _MedicalProfilePageState extends State<MedicalProfilePage> {
               _buildEligibilityCard(),
 
               const SizedBox(height: 18),
+
+              if (_selfReportedLastDonationDate != null ||
+                  _selfReportedLastDonationUnits != null)
+                _buildSelfReportedDonationCard(),
+
+              if (_selfReportedLastDonationDate != null ||
+                  _selfReportedLastDonationUnits != null)
+                const SizedBox(height: 18),
 
               // Donor Health Criteria
               _buildHealthCriteria(),
@@ -344,6 +360,45 @@ class _MedicalProfilePageState extends State<MedicalProfilePage> {
               ),
               const Text('90-day standard interval', style: TextStyle(fontSize: 9, color: Color(0xFF94A3B8))),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSelfReportedDonationCard() {
+    final reportedDate = _selfReportedLastDonationDate;
+    final dateText = reportedDate == null
+        ? 'Date not provided'
+        : '${reportedDate.day}/${reportedDate.month}/${reportedDate.year}';
+    final unitsText = _selfReportedLastDonationUnits == null
+        ? null
+        : ' · ${_selfReportedLastDonationUnits} unit(s) reported';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Self-reported donation history',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '$dateText${unitsText ?? ''}',
+            style: const TextStyle(fontSize: 12, color: Color(0xFF475569)),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'This information is unverified and is not used to determine donation eligibility.',
+            style: TextStyle(fontSize: 10, color: Color(0xFF64748B)),
           ),
         ],
       ),

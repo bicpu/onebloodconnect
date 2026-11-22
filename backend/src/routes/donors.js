@@ -5,6 +5,9 @@ const authenticate = require('../middleware/auth');
 const authorizeRoles = require('../middleware/authorizeRoles');
 const Donor      = require('../models/Donor');
 const { serializeDonorSearchResult } = require('../privacy/donorResponses');
+const donorEligibilityFilter = require('../donors/eligibilityFilter');
+
+const BLOOD_GROUPS = new Set(['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']);
 
 // All routes below require a valid Firebase ID token
 router.use(authenticate);
@@ -60,8 +63,6 @@ router.post('/register', async (req, res) => {
       readyAnyTime:       readyAnyTime  === true,
       showToOthers:       showToOthers  === true,
       registered:         true,
-      hospitalBookingActive: false,
-      bookingStatus:      'ready_to_donate',
       phone:              phone || '',
       dateOfBirth:        dateOfBirth ? new Date(dateOfBirth) : null,
       gender:             gender || '',
@@ -76,21 +77,31 @@ router.post('/register', async (req, res) => {
       consentAccepted:    consentAccepted === true,
     };
 
-    if (lastDonationDate)  update.lastDonationDate  = new Date(lastDonationDate);
-    if (lastDonationUnits) update.lastDonationUnits = lastDonationUnits;
-    if (lastDonationDate) {
-      const coolingDays = lastDonationType === 'Platelets' ? 7
-        : lastDonationType === 'Plasma' ? 28 : 90;
-      update.coolingEndsAt = new Date(new Date(lastDonationDate).getTime() +
-        coolingDays * 24 * 60 * 60 * 1000);
-      update.bookingStatus = 'completed';
-      update.showToOthers = false;
-      update.readyAnyTime = false;
+    // Keep onboarding history distinct from server-verified donation state.
+    if (lastDonationDate !== undefined) {
+      update.selfReportedLastDonationDate = lastDonationDate
+        ? new Date(lastDonationDate)
+        : null;
+    }
+    if (lastDonationUnits !== undefined) {
+      update.selfReportedLastDonationUnits = lastDonationUnits;
     }
 
     const donor = await Donor.findOneAndUpdate(
       { uid: req.uid },
-      { $set: update, $setOnInsert: { publicRef: randomUUID() } },
+      {
+        $set: update,
+        // These fields are authoritative workflow state. Initialize them only
+        // for a new donor; repeat registration must never reset them.
+        $setOnInsert: {
+          publicRef: randomUUID(),
+          lastDonationDate: null,
+          lastDonationUnits: null,
+          coolingEndsAt: null,
+          hospitalBookingActive: false,
+          bookingStatus: 'ready_to_donate',
+        },
+      },
       { upsert: true, new: true, runValidators: true }
     );
 
@@ -111,10 +122,6 @@ router.patch('/me', async (req, res) => {
       'showToOthers',
       'preferredVenue',
       'bloodGroup',
-      'lastDonationDate',
-      'lastDonationUnits',
-      'hospitalBookingActive',
-      'bookingStatus',
       'donationStream',
       'preScreeningAnswers',
       'fullName', 'email', 'phone', 'profilePhotoUrl', 'dateOfBirth', 'gender', 'city', 'state',
@@ -126,7 +133,7 @@ router.patch('/me', async (req, res) => {
     for (const key of allowed) {
       if (req.body[key] !== undefined) {
         // Convert ISO string dates to Date objects
-        if ((key === 'lastDonationDate' || key === 'dateOfBirth') && req.body[key]) {
+        if (key === 'dateOfBirth' && req.body[key]) {
           update[key] = new Date(req.body[key]);
         } else {
           update[key] = req.body[key];
@@ -160,6 +167,11 @@ router.get('/search', async (req, res) => {
   try {
     const { bloodGroup } = req.query;
 
+    if (bloodGroup !== undefined &&
+        (typeof bloodGroup !== 'string' || !BLOOD_GROUPS.has(bloodGroup))) {
+      return res.status(400).json({ error: 'Invalid blood group' });
+    }
+
     // Cooling periods: Platelets 7d, Plasma 28d, everything else 90d.
     // We use the most conservative value (90 days) as the server-side guard.
     // The client computes the exact period per stream, so this is belt-and-suspenders.
@@ -172,12 +184,7 @@ router.get('/search', async (req, res) => {
       publicRef:    { $type: 'string', $ne: '' },
       // Never expose the signed-in donor's own profile in their search results.
       uid: { $ne: req.uid },
-      // Exclude donors who completed a donation within the last 90 days
-      $or: [
-        { bookingStatus: { $ne: 'completed' } },
-        { lastDonationDate: { $lte: ninetyDaysAgo } },
-        { lastDonationDate: null },
-      ],
+      ...donorEligibilityFilter(ninetyDaysAgo),
     };
     if (bloodGroup) query.bloodGroup = bloodGroup;
 

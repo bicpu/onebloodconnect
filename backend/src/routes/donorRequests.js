@@ -5,6 +5,7 @@ const DonorRequest  = require('../models/DonorRequest');
 const Donor         = require('../models/Donor');
 const { serializeDonorRequest } = require('../privacy/donorResponses');
 const { createTransactionRunner, sendTransactionUnavailable } = require('../db/transactions');
+const donorEligibilityFilter = require('../donors/eligibilityFilter');
 
 const runInTransaction = createTransactionRunner(() => DonorRequest.startSession());
 
@@ -40,11 +41,7 @@ router.post('/', async (req, res) => {
       showToOthers: true,
       registered: true,
       manualEntry: { $ne: true },
-      $or: [
-        { bookingStatus: { $ne: 'completed' } },
-        { lastDonationDate: { $lte: ninetyDaysAgo } },
-        { lastDonationDate: null },
-      ],
+      ...donorEligibilityFilter(ninetyDaysAgo),
     }).select('_id uid fullName bloodGroup').lean();
     if (!donor) return res.status(404).json({ error: 'Donor not found' });
 

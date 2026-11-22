@@ -136,9 +136,11 @@ test('contact-by-reference ignores client UIDs and Mongo IDs and rechecks donor 
   const routes = source('src/routes/donorRequests.js');
   const api = source('../lib/services/api_service.dart');
   const contactPage = fs.readFileSync(path.resolve(backendRoot, '..', 'lib/contact_donor_page.dart'), 'utf8');
+  const eligibility = source('src/donors/eligibilityFilter.js');
   assert.match(routes, /donorRef,/);
   assert.match(routes, /publicRef:\s*donorRef,[\s\S]*showToOthers:\s*true,[\s\S]*registered:\s*true,[\s\S]*manualEntry:\s*\{\s*\$ne:\s*true\s*\}/);
-  assert.match(routes, /bookingStatus:\s*\{\s*\$ne:\s*'completed'\s*\}/);
+  assert.match(routes, /\.\.\.donorEligibilityFilter\(ninetyDaysAgo\)/);
+  assert.match(eligibility, /bookingStatus:\s*\{\s*\$in:\s*\[\.\.\.DONOR_BOOKING_STATUSES\]\s*\}/);
   assert.doesNotMatch(routes, /const\s*\{[^}]*donorUid[^}]*\}\s*=\s*req\.body/s);
   assert.doesNotMatch(routes, /const\s*\{[^}]*donorId[^}]*\}\s*=\s*req\.body/s);
   assert.match(api, /required String donorRef/);
@@ -151,7 +153,7 @@ test('donor public reference is server-created, immutable, and excluded from pro
   const model = source('src/models/Donor.js');
   const routes = source('src/routes/donors.js');
   assert.match(model, /publicRef:\s*\{\s*type:\s*String,\s*unique:\s*true,\s*sparse:\s*true,\s*immutable:\s*true,\s*select:\s*false\s*\}/);
-  assert.match(routes, /\$setOnInsert:\s*\{\s*publicRef:\s*randomUUID\(\)\s*\}/);
+  assert.match(routes, /\$setOnInsert:\s*\{[\s\S]*publicRef:\s*randomUUID\(\),[\s\S]*lastDonationDate:\s*null,[\s\S]*lastDonationUnits:\s*null,[\s\S]*coolingEndsAt:\s*null,[\s\S]*hospitalBookingActive:\s*false,[\s\S]*bookingStatus:\s*'ready_to_donate'/);
   assert.doesNotMatch(routes, /const\s*\{[^}]*\bpublicRef\b[^}]*\}\s*=\s*req\.body/s);
   assert.doesNotMatch(routes, /'publicRef'/);
 });
