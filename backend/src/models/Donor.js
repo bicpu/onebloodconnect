@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const PrivateImageMetadata = require('./PrivateImageMetadata');
 const { DONOR_BOOKING_STATUSES } = require('../donors/bookingStatuses');
 
 /**
@@ -15,6 +16,7 @@ const donorSchema = new mongoose.Schema(
     fullName:  { type: String, default: '' },
     email:     { type: String, default: '' },
     profilePhotoUrl: { type: String, default: '' },
+    profilePhoto: { type: PrivateImageMetadata, default: null },
     bloodGroup: { type: String, default: '' },
     dateOfBirth: { type: Date, default: null },
     gender: { type: String, default: '' },

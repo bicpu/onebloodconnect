@@ -107,6 +107,44 @@ The Flutter `ApiService` class fetches this token automatically via `FirebaseAut
 | `GET` | `/donors/me` | Get current user's donor profile |
 | `POST` | `/donors/register` | Register as a donor (create/replace profile) |
 | `PATCH` | `/donors/me` | Partially update donor profile |
+| `GET` | `/donors/search?page=1&pageSize=25` | Search opted-in eligible donors (bounded pages) |
+
+Donor search preserves the JSON-array response. `page` defaults to `1` and must
+be between `1` and `10000`; `pageSize` defaults to `25` and is capped at `100`.
+Ordering is newest first with MongoDB `_id` as a stable tie-breaker. Search is
+rate-limited per authenticated Firebase UID (30 requests per 15 minutes by
+default) and per Express-observed client IP (300 requests per 15 minutes by
+default). These limits can be configured with
+`DONOR_SEARCH_RATE_LIMIT_WINDOW_MS`, `DONOR_SEARCH_RATE_LIMIT_USER_MAX`, and
+`DONOR_SEARCH_RATE_LIMIT_IP_MAX`.
+
+The limiter stores counters in process memory. Limits are therefore per backend
+process and are not shared across multiple instances; a shared store is needed
+if coordinated limits across instances are required. Express does not trust
+forwarded IP headers unless proxy trust is configured, so the IP key uses the
+socket peer by default.
+
+## Private image storage
+
+New booking proofs, donor-request proofs, and donor profile photos are validated
+and re-encoded with `sharp`, then written outside MongoDB. The API requires
+`PRIVATE_FILE_STORAGE_PATH` to be set to a private, persistent directory before
+image reads or writes can succeed. There is intentionally no built-in storage
+path or public/static fallback. Choose the host-mounted Docker path separately;
+the directory must be backed up and must not be web-served.
+
+`PRIVATE_FILE_MAX_IMAGE_BYTES` sets the maximum input size per image (default
+2,097,152 bytes). `PRIVATE_FILE_MAX_PROOF_BYTES` sets the combined input limit
+for the two booking/request proof images (default 4,194,304 bytes). The global
+JSON request parser remains limited to 8 MB. Only JPEG and PNG are accepted;
+the server checks actual decoded content, enforces a 20-million-pixel ceiling,
+re-encodes the image, and strips embedded metadata.
+
+Image API responses contain availability flags, not image bytes. Clients fetch
+images from authenticated record-scoped routes. Legacy Base64 data URIs remain
+readable through those same authorization checks; no migration or deletion is
+performed by the application code. `sharp` 0.35 requires Node.js 20.9 or newer;
+confirm the backend container runtime supports it before deployment.
 
 **POST /donors/register body:**
 ```json

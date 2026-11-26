@@ -10,6 +10,7 @@ const BloodBankAccount = require('../models/BloodBankAccount');
 const { admin }    = require('../config/firebase');
 const { serializeAdminDonation } = require('../privacy/donorResponses');
 const { createTransactionRunner, sendTransactionUnavailable } = require('../db/transactions');
+const sendPrivateImage = require('../storage/imageResponse');
 
 const runInTransaction = createTransactionRunner(() => Booking.startSession());
 
@@ -61,12 +62,30 @@ router.get('/donations/pending', async (_req, res) => {
     const donations = await Booking.find({
       status: 'completed',
       proofStatus: { $in: ['pending', 'approved', 'rejected', 'appealed'] },
-    }).select('_id donorName bloodGroup component bookingRef status units facilityName facilityAddress facilityPhone donatedAt coolingEndsAt donationPhotoUrl doctorSlipUrl proofStatus verificationNote verifiedAt certificateNo appealReason createdAt updatedAt')
+    }).select('_id donorName bloodGroup component bookingRef status units facilityName facilityAddress facilityPhone donatedAt coolingEndsAt donationPhotoUrl doctorSlipUrl donationPhoto doctorSlip proofStatus verificationNote verifiedAt certificateNo appealReason createdAt updatedAt')
       .sort({ updatedAt: -1 }).lean();
     return res.json(donations.map(serializeAdminDonation));
   } catch (err) {
     console.error('[Admin GET /donations/pending]', err);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.get('/donations/:id/proof/:kind', async (req, res) => {
+  try {
+    const fields = {
+      'donation-photo': ['donationPhoto', 'donationPhotoUrl'],
+      'doctor-slip': ['doctorSlip', 'doctorSlipUrl'],
+    }[req.params.kind];
+    if (!fields) return res.status(404).json({ error: 'image_not_found' });
+    const booking = await Booking.findById(req.params.id);
+    if (!booking || booking.status !== 'completed') {
+      return res.status(404).json({ error: 'image_not_found' });
+    }
+    return sendPrivateImage(res, booking[fields[0]], booking[fields[1]]);
+  } catch (_) {
+    console.error('[Admin GET donation proof] Private image lookup failed');
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 

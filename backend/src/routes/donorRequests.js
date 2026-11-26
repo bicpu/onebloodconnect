@@ -6,6 +6,9 @@ const Donor         = require('../models/Donor');
 const { serializeDonorRequest } = require('../privacy/donorResponses');
 const { createTransactionRunner, sendTransactionUnavailable } = require('../db/transactions');
 const donorEligibilityFilter = require('../donors/eligibilityFilter');
+const privateImageStore = require('../storage/privateImageStore');
+const sendPrivateImage = require('../storage/imageResponse');
+const { PrivateImageError } = require('../storage/privateImageStore');
 
 const runInTransaction = createTransactionRunner(() => DonorRequest.startSession());
 
@@ -134,6 +137,24 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+router.get('/:id/proof/:kind', async (req, res) => {
+  try {
+    const fields = {
+      'donation-photo': ['donationPhoto', 'donationPhotoUrl'],
+      'doctor-slip': ['doctorSlip', 'doctorSlipUrl'],
+    }[req.params.kind];
+    if (!fields) return res.status(404).json({ error: 'image_not_found' });
+    // Existing response serialization gives proof only to its uploader, not
+    // the requester. Retain that participant policy for image reads.
+    const request = await DonorRequest.findOne({ _id: req.params.id, donorUid: req.uid });
+    if (!request) return res.status(404).json({ error: 'image_not_found' });
+    return sendPrivateImage(res, request[fields[0]], request[fields[1]]);
+  } catch (_) {
+    console.error('[DonorRequest GET proof] Private image lookup failed');
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // ─── PATCH /donor-requests/:id/accept ────────────────────────────────────────
 // Donor accepts the request. Sets status=accepted, confirmedAt, optional note.
 router.patch('/:id/accept', async (req, res) => {
@@ -219,7 +240,22 @@ router.patch('/:id/cancel', async (req, res) => {
 // Donor marks donation as done, uploads proof.
 // Also sets showToOthers=false and enters cooling period on the Donor document.
 router.patch('/:id/complete', async (req, res) => {
+  let storedImages = {};
   try {
+    const { donationPhotoUrl, doctorSlipUrl } = req.body;
+    if (typeof donationPhotoUrl !== 'string' || typeof doctorSlipUrl !== 'string' ||
+        !donationPhotoUrl || !doctorSlipUrl) {
+      return res.status(400).json({ error: 'both_proof_images_required' });
+    }
+    const preflight = await DonorRequest.findById(req.params.id);
+    if (!preflight) return res.status(404).json({ error: 'Request not found' });
+    if (preflight.donorUid !== req.uid) {
+      return res.status(403).json({ error: 'Only the target donor can complete this request' });
+    }
+    if (preflight.status !== 'accepted') {
+      return res.status(400).json({ error: 'Request must be accepted before completing' });
+    }
+    storedImages = await privateImageStore.storeSet({ donationPhotoUrl, doctorSlipUrl });
     const result = await runInTransaction(async (session) => {
       const outcome = { statusCode: 200, body: null };
       const reply = {
@@ -235,12 +271,13 @@ router.patch('/:id/complete', async (req, res) => {
         reply.status(400).json({ error: 'Request must be accepted before completing' }); return outcome;
       }
 
-      const { donationPhotoUrl, doctorSlipUrl } = req.body;
       const donatedAt = new Date();
       request.status = 'completed';
       request.donatedAt = donatedAt;
-      request.donationPhotoUrl = donationPhotoUrl || '';
-      request.doctorSlipUrl = doctorSlipUrl || '';
+      request.donationPhoto = storedImages.donationPhotoUrl;
+      request.doctorSlip = storedImages.doctorSlipUrl;
+      request.donationPhotoUrl = '';
+      request.doctorSlipUrl = '';
       await request.save({ session });
 
       const component = (request.component || '').toLowerCase();
@@ -265,9 +302,14 @@ router.patch('/:id/complete', async (req, res) => {
       reply.json({ ...serializeDonorRequest(request, req.uid), coolingDays });
       return outcome;
     });
+    if (result.statusCode >= 400) {
+      await Promise.all(Object.values(storedImages).map((image) => privateImageStore.remove(image).catch(() => {})));
+    }
     return res.status(result.statusCode).json(result.body);
   } catch (err) {
+    await Promise.all(Object.values(storedImages).map((image) => privateImageStore.remove(image).catch(() => {})));
     if (sendTransactionUnavailable(err, res)) return;
+    if (err instanceof PrivateImageError) return res.status(err.status).json({ error: err.code });
     console.error('[DonorRequest PATCH /:id/complete]', err);
     return res.status(500).json({ error: 'Server error' });
   }

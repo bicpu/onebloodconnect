@@ -19,6 +19,45 @@ function serializeDonorSearchResult(donor) {
   };
 }
 
+function serializeManualDonor(value) {
+  const source = toPlainObject(value);
+  return {
+    _id: source._id,
+    fullName: source.fullName,
+    bloodGroup: source.bloodGroup,
+    phone: source.phone,
+    city: source.city,
+    donationStream: source.donationStream,
+    readyAnyTime: source.readyAnyTime,
+    createdAt: source.createdAt,
+  };
+}
+
+function hasImage(metadata, legacyValue) {
+  return Boolean(metadata?.key || (typeof legacyValue === 'string' && legacyValue));
+}
+
+function serializeBooking(value) {
+  const source = toPlainObject(value);
+  const result = { ...source };
+  delete result.donationPhotoUrl;
+  delete result.doctorSlipUrl;
+  delete result.donationPhoto;
+  delete result.doctorSlip;
+  result.donationPhotoAvailable = hasImage(source.donationPhoto, source.donationPhotoUrl);
+  result.doctorSlipAvailable = hasImage(source.doctorSlip, source.doctorSlipUrl);
+  return result;
+}
+
+function serializeDonorProfile(value) {
+  const source = toPlainObject(value);
+  const result = { ...source };
+  delete result.profilePhoto;
+  result.profilePhotoUrl = '';
+  result.profilePhotoAvailable = hasImage(source.profilePhoto, source.profilePhotoUrl);
+  return result;
+}
+
 function serializeDonorRequest(value, viewerUid) {
   const source = toPlainObject(value);
   const fields = [
@@ -36,10 +75,10 @@ function serializeDonorRequest(value, viewerUid) {
   if (source.donorUid === viewerUid && source.requesterPhone !== undefined) {
     result.requesterPhone = source.requesterPhone;
   }
-  // Donation proof remains visible only to the donor who uploaded it.
+  // Donation proofs remain accessible only through their authorized image route.
   if (source.donorUid === viewerUid) {
-    result.donationPhotoUrl = source.donationPhotoUrl || '';
-    result.doctorSlipUrl = source.doctorSlipUrl || '';
+    result.donationPhotoAvailable = hasImage(source.donationPhoto, source.donationPhotoUrl);
+    result.doctorSlipAvailable = hasImage(source.doctorSlip, source.doctorSlipUrl);
   }
   return result;
 }
@@ -124,17 +163,23 @@ function serializeAdminDonation(value) {
   const fields = [
     '_id', 'donorName', 'bloodGroup', 'component', 'bookingRef', 'status',
     'units', 'facilityName', 'facilityAddress', 'facilityPhone', 'donatedAt',
-    'coolingEndsAt', 'donationPhotoUrl', 'doctorSlipUrl', 'proofStatus',
+    'coolingEndsAt', 'proofStatus',
     'verificationNote', 'verifiedAt', 'certificateNo', 'appealReason',
     'createdAt', 'updatedAt',
   ];
-  return Object.fromEntries(fields
+  const result = Object.fromEntries(fields
     .filter((field) => source[field] !== undefined)
     .map((field) => [field, source[field]]));
+  result.donationPhotoAvailable = hasImage(source.donationPhoto, source.donationPhotoUrl);
+  result.doctorSlipAvailable = hasImage(source.doctorSlip, source.doctorSlipUrl);
+  return result;
 }
 
 module.exports = {
   serializeDonorSearchResult,
+  serializeManualDonor,
+  serializeBooking,
+  serializeDonorProfile,
   serializeDonorRequest,
   serializeBloodRequest,
   serializeRequesterBloodRequest,

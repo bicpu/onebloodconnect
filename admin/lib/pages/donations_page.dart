@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../services/admin_api.dart';
@@ -15,6 +14,8 @@ class _DonationsPageState extends State<DonationsPage> {
   bool _loading = true;
   List<Map<String, dynamic>> _donations = [];
   int _filter = 0; // all, pending, approved, rejected, appealed
+  final Set<String> _expandedIds = {};
+  final Map<String, Future<Uint8List>> _proofImages = {};
 
   @override
   void initState() {
@@ -26,7 +27,10 @@ class _DonationsPageState extends State<DonationsPage> {
     setState(() => _loading = true);
     try {
       final donations = await _api.getPendingDonations();
-      if (mounted) setState(() => _donations = donations);
+      if (mounted) setState(() {
+        _donations = donations;
+        _proofImages.clear();
+      });
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -155,6 +159,15 @@ class _DonationsPageState extends State<DonationsPage> {
       elevation: 1,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: ExpansionTile(
+        onExpansionChanged: (expanded) {
+          setState(() {
+            if (expanded) {
+              _expandedIds.add(d['_id']?.toString() ?? '');
+            } else {
+              _expandedIds.remove(d['_id']?.toString() ?? '');
+            }
+          });
+        },
         tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         leading: CircleAvatar(
@@ -180,9 +193,9 @@ class _DonationsPageState extends State<DonationsPage> {
           const SizedBox(height: 14),
           Row(
             children: [
-              Expanded(child: _proofImage(d['donationPhotoUrl'], 'Donation photo')),
+              Expanded(child: _proofImage(d['_id']?.toString() ?? '', 'donation-photo', 'Donation photo')),
               const SizedBox(width: 10),
-              Expanded(child: _proofImage(d['doctorSlipUrl'], 'Doctor slip')),
+              Expanded(child: _proofImage(d['_id']?.toString() ?? '', 'doctor-slip', 'Doctor slip')),
             ],
           ),
           const SizedBox(height: 14),
@@ -264,14 +277,33 @@ class _DonationsPageState extends State<DonationsPage> {
     );
   }
 
-  Widget _proofImage(dynamic raw, String label) {
-    final value = raw?.toString() ?? '';
-    Uint8List? bytes;
-    if (value.startsWith('data:') && value.contains(',')) {
-      try {
-        bytes = base64Decode(value.substring(value.indexOf(',') + 1));
-      } catch (_) {}
+  Widget _proofImage(String id, String kind, String label) {
+    if (!_expandedIds.contains(id)) {
+      return _proofImageFrame(label, const Text('Expand to load proof'));
     }
+    final key = '$id/$kind';
+    final future = _proofImages.putIfAbsent(
+      key,
+      () => _api.getDonationProofImage(id, kind),
+    );
+    return FutureBuilder<Uint8List>(
+      future: future,
+      builder: (context, snapshot) {
+        if (snapshot.hasData) {
+          return _proofImageFrame(label, Image.memory(snapshot.data!, fit: BoxFit.cover));
+        }
+        if (snapshot.hasError) {
+          return _proofImageFrame(label, const Text('No proof attached'));
+        }
+        return _proofImageFrame(
+          label,
+          const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+        );
+      },
+    );
+  }
+
+  Widget _proofImageFrame(String label, Widget child) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -287,11 +319,7 @@ class _DonationsPageState extends State<DonationsPage> {
             borderRadius: BorderRadius.circular(10),
           ),
           clipBehavior: Clip.antiAlias,
-          child: bytes != null
-              ? Image.memory(bytes, fit: BoxFit.cover)
-              : const Center(
-                  child: Text('No proof attached',
-                      style: TextStyle(fontSize: 11))),
+          child: Center(child: child),
         ),
       ],
     );

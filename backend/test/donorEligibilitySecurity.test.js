@@ -40,10 +40,16 @@ function matchesFilter(record, query) {
 }
 
 function queryResult(value) {
+  let offset = 0;
+  let pageSize = Infinity;
   return {
     select() { return this; },
     sort() { return this; },
-    async lean() { return value; },
+    skip(count) { offset = count; return this; },
+    limit(count) { pageSize = count; return this; },
+    async lean() {
+      return Array.isArray(value) ? value.slice(offset, offset + pageSize) : value;
+    },
   };
 }
 

@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const PrivateImageMetadata = require('./PrivateImageMetadata');
 
 /**
  * Booking — represents a hospital slot booked by a donor.
@@ -47,6 +48,8 @@ const bookingSchema = new mongoose.Schema(
     donatedAt:       { type: Date,   default: null },   // actual donation timestamp
     donationPhotoUrl:{ type: String, default: '' },     // selfie / photo proof
     doctorSlipUrl:   { type: String, default: '' },     // doctor slip / receipt
+    donationPhoto:   { type: PrivateImageMetadata, default: null },
+    doctorSlip:      { type: PrivateImageMetadata, default: null },
     proofStatus: {
       type: String,
       enum: ['not_submitted', 'pending', 'approved', 'rejected', 'appealed'],

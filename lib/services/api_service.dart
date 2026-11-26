@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 
@@ -28,6 +29,30 @@ class ApiService {
       HttpHeaders.authorizationHeader: 'Bearer $token',
     };
   }
+
+  Future<Uint8List> getPrivateImage(String path) async {
+    final headers = await _authHeaders();
+    final response = await http
+        .get(Uri.parse('$baseUrl$path'), headers: headers)
+        .timeout(_timeout);
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return response.bodyBytes;
+    }
+    String message = 'HTTP ${response.statusCode}';
+    try {
+      message = (jsonDecode(response.body) as Map<String, dynamic>)['error']?.toString() ?? message;
+    } catch (_) {}
+    throw Exception(message);
+  }
+
+  Future<Uint8List> getBookingProofImage(String bookingId, String kind) =>
+      getPrivateImage('/bookings/$bookingId/proof/$kind');
+
+  Future<Uint8List> getDonorRequestProofImage(String requestId, String kind) =>
+      getPrivateImage('/donor-requests/$requestId/proof/$kind');
+
+  Future<Uint8List> getMyProfilePhoto() =>
+      getPrivateImage('/donors/me/profile-photo');
 
   // ─── Response handling ───────────────────────────────────────────────────────
 
@@ -684,12 +709,21 @@ class ApiService {
 
   /// GET /donors/search?bloodGroup=O%2B
   /// Returns donors with showToOthers=true who are eligible to donate.
-  Future<List<Map<String, dynamic>>> searchDonors({String? bloodGroup}) async {
+  Future<List<Map<String, dynamic>>> searchDonors({
+    String? bloodGroup,
+    int page = 1,
+    int pageSize = 25,
+  }) async {
     final headers = await _authHeaders();
+    final queryParameters = <String, String>{
+      'page': page.toString(),
+      'pageSize': pageSize.toString(),
+    };
+    if (bloodGroup != null && bloodGroup.isNotEmpty) {
+      queryParameters['bloodGroup'] = bloodGroup;
+    }
     final uri = Uri.parse('$baseUrl/donors/search').replace(
-      queryParameters: (bloodGroup != null && bloodGroup.isNotEmpty)
-          ? {'bloodGroup': bloodGroup}
-          : null,
+      queryParameters: queryParameters,
     );
     final response = await http.get(uri, headers: headers).timeout(_timeout);
     if (response.statusCode >= 200 && response.statusCode < 300) {

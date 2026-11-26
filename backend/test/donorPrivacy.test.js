@@ -41,8 +41,10 @@ test('donor request responses omit donor identifiers and share requester contact
   assert.equal(requesterView._id, 'request-id');
   assert.equal(requesterView.requesterPhone, undefined);
   assert.equal(requesterView.donationPhotoUrl, undefined);
+  assert.equal(requesterView.donationPhotoAvailable, undefined);
   assert.equal(donorView.requesterPhone, 'requester-phone');
-  assert.equal(donorView.donationPhotoUrl, 'proof-photo');
+  assert.equal(donorView.donationPhotoUrl, undefined);
+  assert.equal(donorView.donationPhotoAvailable, true);
   for (const view of [requesterView, donorView]) {
     assert.equal(view.donorId, undefined);
     assert.equal(view.donorUid, undefined);
@@ -111,14 +113,16 @@ test('facility and admin donation serializers omit Firebase donor UIDs', () => {
   assert.equal(serializeAdminDonation(booking).donorUid, undefined);
 });
 
-test('admin donation review retains proof fields while limiting output to its allowlist', () => {
+test('admin donation review exposes proof availability without embedding image data', () => {
   const result = serializeAdminDonation({
     _id: 'booking-id', donorUid: 'firebase-uid', donorEmail: 'private-email',
     donationPhotoUrl: 'proof-photo', doctorSlipUrl: 'doctor-slip',
     facilityName: 'Facility', facilityPhone: 'facility-phone',
   });
-  assert.equal(result.donationPhotoUrl, 'proof-photo');
-  assert.equal(result.doctorSlipUrl, 'doctor-slip');
+  assert.equal(result.donationPhotoAvailable, true);
+  assert.equal(result.doctorSlipAvailable, true);
+  assert.equal(result.donationPhotoUrl, undefined);
+  assert.equal(result.doctorSlipUrl, undefined);
   assert.equal(result.donorUid, undefined);
   assert.equal(result.donorEmail, undefined);
 });

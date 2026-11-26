@@ -4,10 +4,37 @@ const router     = express.Router();
 const authenticate = require('../middleware/auth');
 const authorizeRoles = require('../middleware/authorizeRoles');
 const Donor      = require('../models/Donor');
-const { serializeDonorSearchResult } = require('../privacy/donorResponses');
+const {
+  serializeDonorSearchResult,
+  serializeManualDonor,
+} = require('../privacy/donorResponses');
 const donorEligibilityFilter = require('../donors/eligibilityFilter');
+const donorSearchRateLimit = require('../middleware/donorSearchRateLimit');
+const privateImageStore = require('../storage/privateImageStore');
+const sendPrivateImage = require('../storage/imageResponse');
+const { PrivateImageError } = require('../storage/privateImageStore');
+const { serializeDonorProfile } = require('../privacy/donorResponses');
 
 const BLOOD_GROUPS = new Set(['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']);
+const DEFAULT_SEARCH_PAGE_SIZE = 25;
+const MAX_SEARCH_PAGE_SIZE = 100;
+const MAX_SEARCH_PAGE = 10000;
+
+function parsePaginationParameter(value, fallback, maximum, clampMaximum = false) {
+  if (value === undefined) return { value: fallback };
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) {
+    return { error: 'Pagination parameters must be positive integers' };
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    return { error: 'Pagination parameters must be positive integers' };
+  }
+  if (parsed > maximum) {
+    if (clampMaximum) return { value: maximum };
+    return { error: 'Page is too large' };
+  }
+  return { value: parsed };
+}
 
 // All routes below require a valid Firebase ID token
 router.use(authenticate);
@@ -24,10 +51,21 @@ router.get('/me', async (req, res) => {
       return res.json({ registered: false });
     }
 
-    res.json(donor);
+    res.json(serializeDonorProfile(donor));
   } catch (err) {
     console.error('[Donor GET /me]', err);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.get('/me/profile-photo', async (req, res) => {
+  try {
+    const donor = await Donor.findOne({ uid: req.uid });
+    if (!donor) return res.status(404).json({ error: 'image_not_found' });
+    return sendPrivateImage(res, donor.profilePhoto, donor.profilePhotoUrl);
+  } catch (_) {
+    console.error('[Donor GET profile photo] Private image lookup failed');
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -35,6 +73,7 @@ router.get('/me', async (req, res) => {
 // Called from DonateBloodPage when the user completes registration.
 // Creates or fully replaces the donor profile.
 router.post('/register', async (req, res) => {
+  let storedProfilePhoto = null;
   try {
     const {
       fullName,
@@ -52,11 +91,16 @@ router.post('/register', async (req, res) => {
       emergencyAvailable, consentAccepted,
     } = req.body;
 
+    const existingDonor = await Donor.findOne({ uid: req.uid });
+    const oldProfilePhoto = existingDonor?.profilePhoto;
+    if (profilePhotoUrl) storedProfilePhoto = await privateImageStore.storeDataUri(profilePhotoUrl);
+
     const update = {
       uid:                req.uid,
       fullName:           fullName   || req.firebaseUser.name || 'Donor',
       email:              email      || req.firebaseUser.email || '',
-      profilePhotoUrl:    profilePhotoUrl || '',
+      profilePhotoUrl:    '',
+      profilePhoto:       storedProfilePhoto,
       bloodGroup:         bloodGroup || '',
       donationStream:     donationStream || 'Whole Blood',
       preScreeningAnswers: preScreeningAnswers || {},
@@ -105,8 +149,13 @@ router.post('/register', async (req, res) => {
       { upsert: true, new: true, runValidators: true }
     );
 
-    res.status(201).json(donor);
+    if (oldProfilePhoto?.key && oldProfilePhoto.key !== storedProfilePhoto?.key) {
+      await privateImageStore.remove(oldProfilePhoto).catch(() => {});
+    }
+    res.status(201).json(serializeDonorProfile(donor));
   } catch (err) {
+    if (storedProfilePhoto) await privateImageStore.remove(storedProfilePhoto).catch(() => {});
+    if (err instanceof PrivateImageError) return res.status(err.status).json({ error: err.code });
     console.error('[Donor POST /register]', err);
     res.status(500).json({ error: 'Server error' });
   }
@@ -115,6 +164,7 @@ router.post('/register', async (req, res) => {
 // ─── PATCH /donors/me ─────────────────────────────────────────────────────────
 // Partial update — used by venue preference, ready-any-time toggle, etc.
 router.patch('/me', async (req, res) => {
+  let storedProfilePhoto = null;
   try {
     // Whitelist updatable fields to avoid accidental overwrites
     const allowed = [
@@ -130,7 +180,21 @@ router.patch('/me', async (req, res) => {
     ];
 
     const update = {};
+    const hasProfilePhotoInput = Object.hasOwn(req.body, 'profilePhotoUrl');
+    const existingDonor = hasProfilePhotoInput
+      ? await Donor.findOne({ uid: req.uid })
+      : null;
+    const oldProfilePhoto = existingDonor?.profilePhoto;
+    if (hasProfilePhotoInput && req.body.profilePhotoUrl) {
+      storedProfilePhoto = await privateImageStore.storeDataUri(req.body.profilePhotoUrl);
+      update.profilePhoto = storedProfilePhoto;
+      update.profilePhotoUrl = '';
+    } else if (hasProfilePhotoInput) {
+      update.profilePhoto = null;
+      update.profilePhotoUrl = '';
+    }
     for (const key of allowed) {
+      if (key === 'profilePhotoUrl') continue;
       if (req.body[key] !== undefined) {
         // Convert ISO string dates to Date objects
         if (key === 'dateOfBirth' && req.body[key]) {
@@ -151,8 +215,13 @@ router.patch('/me', async (req, res) => {
       { new: true, upsert: true, runValidators: true }
     );
 
-    res.json(donor);
+    if (oldProfilePhoto?.key && oldProfilePhoto.key !== storedProfilePhoto?.key && hasProfilePhotoInput) {
+      await privateImageStore.remove(oldProfilePhoto).catch(() => {});
+    }
+    res.json(serializeDonorProfile(donor));
   } catch (err) {
+    if (storedProfilePhoto) await privateImageStore.remove(storedProfilePhoto).catch(() => {});
+    if (err instanceof PrivateImageError) return res.status(err.status).json({ error: err.code });
     console.error('[Donor PATCH /me]', err);
     res.status(500).json({ error: 'Server error' });
   }
@@ -163,9 +232,21 @@ router.patch('/me', async (req, res) => {
 // currently in a cooling period (i.e. bookingStatus != 'completed', OR their
 // last donation was long enough ago that they are eligible again).
 // Used by SearchPage. Optional ?bloodGroup=O%2B filter.
-router.get('/search', async (req, res) => {
+router.get('/search', donorSearchRateLimit, async (req, res) => {
   try {
-    const { bloodGroup } = req.query;
+    const { bloodGroup, page: rawPage, pageSize: rawPageSize } = req.query;
+
+    const pageResult = parsePaginationParameter(rawPage, 1, MAX_SEARCH_PAGE);
+    if (pageResult.error) return res.status(400).json({ error: pageResult.error });
+    const pageSizeResult = parsePaginationParameter(
+      rawPageSize,
+      DEFAULT_SEARCH_PAGE_SIZE,
+      MAX_SEARCH_PAGE_SIZE,
+      true,
+    );
+    if (pageSizeResult.error) return res.status(400).json({ error: pageSizeResult.error });
+    const page = pageResult.value;
+    const pageSize = pageSizeResult.value;
 
     if (bloodGroup !== undefined &&
         (typeof bloodGroup !== 'string' || !BLOOD_GROUPS.has(bloodGroup))) {
@@ -198,7 +279,9 @@ router.get('/search', async (req, res) => {
         donationStream: 1,
         readyAnyTime: 1,
       })
-      .sort({ createdAt: -1 })
+      .sort({ createdAt: -1, _id: -1 })
+      .skip((page - 1) * pageSize)
+      .limit(pageSize)
       .lean();
 
     return res.json(donors.map(serializeDonorSearchResult));
@@ -255,11 +338,7 @@ router.post('/manual', authorizeRoles('admin'), async (req, res) => {
       { upsert: true, new: true, runValidators: false }
     );
 
-    const result = donor.toObject();
-    delete result.uid;
-    delete result.email;
-    delete result.publicRef;
-    return res.status(201).json(result);
+    return res.status(201).json(serializeManualDonor(donor));
   } catch (err) {
     console.error('[Donor POST /manual]', err);
     res.status(500).json({ error: 'Server error' });

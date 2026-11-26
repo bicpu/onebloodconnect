@@ -13,6 +13,7 @@ const {
   serializeFacilityBloodRequest,
 } = require('../privacy/donorResponses');
 const { createTransactionRunner, sendTransactionUnavailable } = require('../db/transactions');
+const sendPrivateImage = require('../storage/imageResponse');
 
 const runInTransaction = createTransactionRunner(() => Booking.startSession());
 
@@ -232,6 +233,26 @@ router.get('/donations/pending', requireVerifiedBloodBank, async (req, res) => {
     return res.json(donations.map(serializeFacilityDonation));
   } catch (err) {
     console.error('[BloodBank GET /donations/pending]', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.get('/donations/:id/proof/:kind', requireVerifiedBloodBank, async (req, res) => {
+  try {
+    const fields = {
+      'donation-photo': ['donationPhoto', 'donationPhotoUrl'],
+      'doctor-slip': ['doctorSlip', 'doctorSlipUrl'],
+    }[req.params.kind];
+    if (!fields) return res.status(404).json({ error: 'image_not_found' });
+    const ownership = facilityOwnershipFilter('facilityAccountId', req.bankAccount);
+    if (!ownership) return res.status(404).json({ error: 'image_not_found' });
+    const booking = await Booking.findOne({ _id: req.params.id, ...ownership });
+    if (!booking || booking.status !== 'completed') {
+      return res.status(404).json({ error: 'image_not_found' });
+    }
+    return sendPrivateImage(res, booking[fields[0]], booking[fields[1]]);
+  } catch (_) {
+    console.error('[BloodBank GET donation proof] Private image lookup failed');
     return res.status(500).json({ error: 'Server error' });
   }
 });

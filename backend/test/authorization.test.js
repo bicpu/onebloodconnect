@@ -170,7 +170,7 @@ test('revoke warns and fails if token revocation fails after claim removal', asy
 test('all admin router routes inherit authentication and admin authorization', () => {
   const source = readRoute('admin.js');
   assert.match(source, /router\.use\(authenticate,\s*authorizeRoles\('admin'\)\)/);
-  assert.equal((source.match(/router\.(?:get|post|patch|delete|put)\(/g) || []).length, 6);
+  assert.equal((source.match(/router\.(?:get|post|patch|delete|put)\(/g) || []).length, 7);
 });
 
 test('Firebase token verification checks revocation', () => {
@@ -188,7 +188,7 @@ test('admin-only bank and manual-donor routes are guarded; directory reads remai
   const donors = readRoute('donors.js');
   assert.match(donors, /router\.use\(authenticate\)/);
   assert.match(donors, /router\.get\('\/me',\s*async/);
-  assert.match(donors, /router\.get\('\/search',\s*async/);
+  assert.match(donors, /router\.get\('\/search',\s*donorSearchRateLimit,\s*async/);
   assert.match(donors, /router\.get\('\/manual',\s*authorizeRoles\('admin'\)/);
   assert.match(donors, /router\.post\('\/manual',\s*authorizeRoles\('admin'\)/);
   assert.match(donors, /router\.delete\('\/manual\/:id',\s*authorizeRoles\('admin'\)/);

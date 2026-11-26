@@ -27,6 +27,11 @@ class _SearchPageState extends State<SearchPage> {
   // ── Data ──────────────────────────────────────────────────────────────────
   bool   _loading = true;
   String? _error;
+  static const int _donorPageSize = 25;
+  int _donorPage = 1;
+  bool _hasMoreDonors = true;
+  bool _loadingMoreDonors = false;
+  String? _loadMoreDonorsError;
 
   List<Map<String, dynamic>> _allBanks   = [];
   List<Map<String, dynamic>> _allDonors  = [];
@@ -53,11 +58,18 @@ class _SearchPageState extends State<SearchPage> {
   // ── Fetch ─────────────────────────────────────────────────────────────────
 
   Future<void> _load() async {
-    setState(() { _loading = true; _error = null; });
+    setState(() {
+      _loading = true;
+      _error = null;
+      _donorPage = 1;
+      _hasMoreDonors = true;
+      _loadingMoreDonors = false;
+      _loadMoreDonorsError = null;
+    });
     try {
       final results = await Future.wait([
         ApiService().getBloodBanks(),          // admin-added banks
-        ApiService().searchDonors(),
+        ApiService().searchDonors(page: 1, pageSize: _donorPageSize),
         ApiService().getBloodBankAccounts(),    // self-registered blood bank accounts
       ]);
 
@@ -87,11 +99,42 @@ class _SearchPageState extends State<SearchPage> {
       setState(() {
         _allBanks  = merged;
         _allDonors = results[1];
+        _hasMoreDonors = results[1].length == _donorPageSize;
       });
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loadMoreDonors() async {
+    if (_loadingMoreDonors || !_hasMoreDonors) return;
+    setState(() {
+      _loadingMoreDonors = true;
+      _loadMoreDonorsError = null;
+    });
+    try {
+      final nextPage = _donorPage + 1;
+      final donors = await ApiService().searchDonors(
+        page: nextPage,
+        pageSize: _donorPageSize,
+      );
+      if (!mounted) return;
+      setState(() {
+        final existingRefs = _allDonors
+            .map((donor) => donor['publicRef'])
+            .whereType<String>()
+            .toSet();
+        _allDonors.addAll(donors.where((donor) =>
+            !existingRefs.contains(donor['publicRef'])));
+        _donorPage = nextPage;
+        _hasMoreDonors = donors.length == _donorPageSize;
+      });
+    } catch (e) {
+      if (mounted) setState(() => _loadMoreDonorsError = e.toString());
+    } finally {
+      if (mounted) setState(() => _loadingMoreDonors = false);
     }
   }
 
@@ -336,6 +379,31 @@ class _SearchPageState extends State<SearchPage> {
                     ],
 
                     // ── All-empty state ───────────────────────────────
+                    if (selectedTypeIndex != 1 && _hasMoreDonors) ...[
+                      if (_loadMoreDonorsError != null)
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 8),
+                          child: Text(
+                            'Could not load more donors. Tap to retry.',
+                            style: TextStyle(color: Color(0xFFB42318), fontSize: 12),
+                          ),
+                        ),
+                      Center(
+                        child: OutlinedButton(
+                          onPressed: _loadingMoreDonors ? null : _loadMoreDonors,
+                          child: _loadingMoreDonors
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : Text(_loadMoreDonorsError == null
+                                  ? 'Load more donors'
+                                  : 'Retry loading donors'),
+                        ),
+                      ),
+                    ],
+
                     if (selectedTypeIndex == 0 && _banks.isEmpty && _donors.isEmpty)
                       _emptyState('No results found.\nTry a different filter.', Icons.search_off),
                   ],

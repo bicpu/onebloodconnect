@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'services/api_service.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:convert';
+import 'dart:typed_data';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -28,7 +29,7 @@ class _ProfilePageState extends State<ProfilePage> {
   String _phone = '';
   String _city = '';
   String _state = '';
-  String _photoData = '';
+  Uint8List? _photoBytes;
   bool _registered = false;
   final List<String> _bloodGroups = const ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'];
 
@@ -48,6 +49,12 @@ class _ProfilePageState extends State<ProfilePage> {
     try {
       profile = await ApiService().getMyDonorProfile();
     } catch (_) {}
+    Uint8List? photoBytes;
+    if (profile['profilePhotoAvailable'] == true) {
+      try {
+        photoBytes = await ApiService().getMyProfilePhoto();
+      } catch (_) {}
+    }
     // load stay-signed-in preference
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -70,7 +77,7 @@ class _ProfilePageState extends State<ProfilePage> {
       _phone = profile['phone']?.toString() ?? '';
       _city = profile['city']?.toString() ?? '';
       _state = profile['state']?.toString() ?? '';
-      _photoData = profile['profilePhotoUrl']?.toString() ?? '';
+      _photoBytes = photoBytes;
       _registered = profile['registered'] == true;
     });
   }
@@ -87,7 +94,7 @@ class _ProfilePageState extends State<ProfilePage> {
     try {
       await ApiService().updateDonorProfile({'profilePhotoUrl': encoded});
       if (!mounted) return;
-      setState(() => _photoData = encoded);
+      setState(() => _photoBytes = bytes);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Profile photo updated.')),
       );
@@ -605,13 +612,11 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Widget _photoAvatar(double radius) {
-    if (_photoData.startsWith('data:image')) {
-      try {
-        return CircleAvatar(
-          radius: radius,
-          backgroundImage: MemoryImage(base64Decode(_photoData.split(',').last)),
-        );
-      } catch (_) {}
+    if (_photoBytes != null) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundImage: MemoryImage(_photoBytes!),
+      );
     }
     return CircleAvatar(
       radius: radius,

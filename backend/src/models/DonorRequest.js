@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const PrivateImageMetadata = require('./PrivateImageMetadata');
 
 /**
  * DonorRequest — created when a user contacts a specific registered donor
@@ -51,6 +52,8 @@ const donorRequestSchema = new mongoose.Schema(
     donatedAt:        { type: Date,   default: null },
     donationPhotoUrl: { type: String, default: '' },
     doctorSlipUrl:    { type: String, default: '' },
+    donationPhoto:    { type: PrivateImageMetadata, default: null },
+    doctorSlip:       { type: PrivateImageMetadata, default: null },
 
     // Cancellation metadata
     cancelledBy:   { type: String, enum: ['requester', 'donor', ''], default: '' },

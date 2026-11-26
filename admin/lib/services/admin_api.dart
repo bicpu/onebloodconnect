@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 
@@ -158,6 +159,20 @@ class AdminApi {
         .get(Uri.parse('$baseUrl/admin/donations/pending'), headers: h)
         .timeout(_timeout);
     return _handleList(r);
+  }
+
+  Future<Uint8List> getDonationProofImage(String donationId, String kind) async {
+    final h = await _headers();
+    final r = await http.get(
+      Uri.parse('$baseUrl/admin/donations/$donationId/proof/$kind'),
+      headers: h,
+    ).timeout(_timeout);
+    if (r.statusCode >= 200 && r.statusCode < 300) return r.bodyBytes;
+    String error = 'HTTP ${r.statusCode}';
+    try {
+      error = (jsonDecode(r.body) as Map<String, dynamic>)['error']?.toString() ?? error;
+    } catch (_) {}
+    throw Exception(error);
   }
 
   Future<Map<String, dynamic>> verifyDonation(

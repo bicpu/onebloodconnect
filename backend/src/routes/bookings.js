@@ -5,6 +5,10 @@ const Booking      = require('../models/Booking');
 const Donor        = require('../models/Donor');
 const BloodBankAccount = require('../models/BloodBankAccount');
 const BloodBank = require('../models/BloodBank');
+const privateImageStore = require('../storage/privateImageStore');
+const sendPrivateImage = require('../storage/imageResponse');
+const { PrivateImageError } = require('../storage/privateImageStore');
+const { serializeBooking } = require('../privacy/donorResponses');
 const { isActiveBookingDuplicateError } = require('../bookings/bookingErrors');
 const {
   createTransactionRunner,
@@ -72,7 +76,7 @@ router.post('/', async (req, res) => {
     if (existing) {
       return res.status(409).json({
         error:   'active_booking_exists',
-        booking: existing,
+        booking: serializeBooking(existing),
         message: 'You already have an active booking. Complete or cancel it before booking again.',
       });
     }
@@ -108,7 +112,7 @@ router.post('/', async (req, res) => {
       return created;
     });
 
-    res.status(201).json(booking);
+      res.status(201).json(serializeBooking(booking));
   } catch (err) {
     if (sendTransactionUnavailable(err, res)) return;
     if (err instanceof FacilitySelectionError) {
@@ -127,7 +131,7 @@ router.post('/', async (req, res) => {
       }
       return res.status(409).json({
         error: 'active_booking_exists',
-        booking,
+        booking: booking ? serializeBooking(booking) : null,
         message: 'You already have an active booking. Complete or cancel it before booking again.',
       });
     }
@@ -150,7 +154,7 @@ router.get('/active', async (req, res) => {
       .lean();
 
     if (active) {
-      return res.json({ active: true, booking: active });
+      return res.json({ active: true, booking: serializeBooking(active) });
     }
 
     const pending = await Booking.findOne({
@@ -167,7 +171,7 @@ router.get('/active', async (req, res) => {
         needsAction: pending.proofStatus === 'rejected',
         appealed: pending.proofStatus === 'appealed',
         cooling: false,
-        booking: pending,
+        booking: serializeBooking(pending),
       });
     }
 
@@ -194,7 +198,7 @@ router.get('/active', async (req, res) => {
         cooling: true,
         coolingComplete: coolingEndsAt <= now,
         booking: {
-          ...cooling,
+          ...serializeBooking(cooling),
           donatedAt,
           coolingDays,
           coolingEndsAt,
@@ -224,7 +228,7 @@ router.patch('/:id/appeal', async (req, res) => {
     booking.appealReason = appealReason;
     booking.appealedAt = new Date();
     await booking.save();
-    res.json(booking);
+    res.json(serializeBooking(booking));
   } catch (err) {
     console.error('[Booking PATCH /:id/appeal]', err);
     res.status(500).json({ error: 'Server error' });
@@ -237,7 +241,7 @@ router.get('/history', async (req, res) => {
     const bookings = await Booking.find({ donorUid: req.uid })
       .sort({ createdAt: -1 })
       .lean();
-    res.json(bookings);
+    res.json(bookings.map(serializeBooking));
   } catch (err) {
     console.error('[Booking GET /history]', err);
     res.status(500).json({ error: 'Server error' });
@@ -252,7 +256,7 @@ router.get('/:id', async (req, res) => {
     const bookingDoc = await Booking.findOne({ _id: req.params.id, donorUid: req.uid });
     const booking = bookingDoc ? await normalizePendingDonationDate(bookingDoc) : null;
     if (!booking)                        return res.status(404).json({ error: 'Booking not found' });
-    res.json(booking.toObject());
+    res.json(serializeBooking(booking));
   } catch (err) {
     console.error('[Booking GET /:id]', err);
     res.status(500).json({ error: 'Server error' });
@@ -262,7 +266,8 @@ router.get('/:id', async (req, res) => {
 // ─── GET /bookings/:id/certificate ──────────────────────────────────────────
 router.get('/:id/certificate', async (req, res) => {
   try {
-    const booking = await Booking.findById(req.params.id).lean();
+    const booking = await Booking.findById(req.params.id)
+      .select('donorUid proofStatus certificateNo certificateIssuedAt bookingRef').lean();
     if (!booking) return res.status(404).json({ error: 'Booking not found' });
     if (booking.donorUid !== req.uid) return res.status(403).json({ error: 'Forbidden' });
     if (booking.proofStatus !== 'approved' || !booking.certificateNo) {
@@ -284,14 +289,41 @@ router.get('/:id/certificate', async (req, res) => {
   }
 });
 
+router.get('/:id/proof/:kind', async (req, res) => {
+  try {
+    const fields = {
+      'donation-photo': ['donationPhoto', 'donationPhotoUrl'],
+      'doctor-slip': ['doctorSlip', 'doctorSlipUrl'],
+    }[req.params.kind];
+    if (!fields) return res.status(404).json({ error: 'image_not_found' });
+    const booking = await Booking.findOne({ _id: req.params.id, donorUid: req.uid });
+    if (!booking) return res.status(404).json({ error: 'image_not_found' });
+    return sendPrivateImage(res, booking[fields[0]], booking[fields[1]]);
+  } catch (err) {
+    console.error('[Booking GET proof] Private image lookup failed');
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // ─── PATCH /bookings/:id/complete ─────────────────────────────────────────────
 // Donor marks their donation as done.
 // Body: { donationPhotoUrl, doctorSlipUrl }
 // Sets donatedAt, coolingEndsAt, status=completed.
 // Also updates Donor.lastDonationDate and clears hospitalBookingActive.
 router.patch('/:id/complete', async (req, res) => {
+  let storedImages = {};
   try {
     const { donationPhotoUrl, doctorSlipUrl } = req.body;
+    if (typeof donationPhotoUrl !== 'string' || typeof doctorSlipUrl !== 'string' ||
+        !donationPhotoUrl || !doctorSlipUrl) {
+      return res.status(400).json({ error: 'both_proof_images_required' });
+    }
+    const preflight = await Booking.findById(req.params.id);
+    if (!preflight) return res.status(404).json({ error: 'Booking not found' });
+    if (preflight.donorUid !== req.uid) return res.status(403).json({ error: 'Forbidden' });
+    if (preflight.status === 'completed') return res.status(409).json({ error: 'Already completed' });
+    if (preflight.status === 'cancelled') return res.status(409).json({ error: 'Booking was cancelled' });
+    storedImages = await privateImageStore.storeSet({ donationPhotoUrl, doctorSlipUrl });
     const result = await runInTransaction(async (session) => {
       const booking = await Booking.findById(req.params.id).session(session);
       if (!booking) return { status: 404, body: { error: 'Booking not found' } };
@@ -309,8 +341,10 @@ router.patch('/:id/complete', async (req, res) => {
       booking.status = 'completed';
       booking.donatedAt = donatedAt;
       booking.coolingEndsAt = coolingEndsAt;
-      booking.donationPhotoUrl = donationPhotoUrl || '';
-      booking.doctorSlipUrl = doctorSlipUrl || '';
+      booking.donationPhoto = storedImages.donationPhotoUrl;
+      booking.doctorSlip = storedImages.doctorSlipUrl;
+      booking.donationPhotoUrl = '';
+      booking.doctorSlipUrl = '';
       booking.proofStatus = 'pending';
       booking.verificationNote = '';
       booking.verifiedAt = null;
@@ -326,10 +360,15 @@ router.patch('/:id/complete', async (req, res) => {
       );
       return { booking };
     });
-    if (result.status) return res.status(result.status).json(result.body);
-    return res.json(result.booking);
+    if (result.status) {
+      await Promise.all(Object.values(storedImages).map((image) => privateImageStore.remove(image).catch(() => {})));
+      return res.status(result.status).json(result.body);
+    }
+    return res.json(serializeBooking(result.booking));
   } catch (err) {
+    await Promise.all(Object.values(storedImages).map((image) => privateImageStore.remove(image).catch(() => {})));
     if (sendTransactionUnavailable(err, res)) return;
+    if (err instanceof PrivateImageError) return res.status(err.status).json({ error: err.code });
     console.error('[Booking PATCH /:id/complete]', err);
     return res.status(500).json({ error: 'Server error' });
   }
@@ -356,7 +395,7 @@ router.patch('/:id/not-donated', async (req, res) => {
       return { booking };
     });
     if (result.status) return res.status(result.status).json(result.body);
-    return res.json(result.booking);
+    return res.json(serializeBooking(result.booking));
   } catch (err) {
     if (sendTransactionUnavailable(err, res)) return;
     console.error('[Booking PATCH /:id/not-donated]', err);
@@ -381,7 +420,7 @@ router.patch('/:id/cancel', async (req, res) => {
       return { booking };
     });
     if (result.status) return res.status(result.status).json(result.body);
-    return res.json(result.booking);
+    return res.json(serializeBooking(result.booking));
   } catch (err) {
     if (sendTransactionUnavailable(err, res)) return;
     console.error('[Booking PATCH /:id/cancel]', err);
